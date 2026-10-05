@@ -8,14 +8,15 @@
 
 ## Environment Variables
 - `RUNWAYML_API_SECRET`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
+- `ADMIN_EMAIL=ayazmilad2728@gmail.com`
+- `ADMIN_PASSWORD=137804292790812225Ayazmilad`
 - `ALLOWED_ORIGINS=*`
 - `DAILY_FREE_USER=5`
 - `DAILY_FREE_ADMIN=80`
 - `PRICE_PER_VIDEO=10000`
 - `CURRENCY=IRT`
-- `FREE_ENGINE_URL=`
+- `FREE_ENGINE_URL=https://multimodalart-minimax-h3.hf.space`
+- FREE_ENGINE_MODE=auto`
 - `FREE_ENGINE_API_KEY=`
 - `ZARINPAL_MERCHANT_ID=`
 - `ZARINPAL_CALLBACK_URL=https://ayaz-video-maker-0x5c.onrender.com/api/payment/zarinpal/callback`
