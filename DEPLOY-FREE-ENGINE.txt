@@ -1,8 +1,0 @@
-1) Render > Environment
-2) Set FREE_ENGINE_URL to:
-   https://multimodalart-minimax-h3.hf.space
-3) Set FREE_ENGINE_MODE=auto
-4) Redeploy
-5) Open /api/health and confirm freeEngineConfigured=true
-6) Generate a TEXT-ONLY video with Free Engine.
-7) Use Runway when an input image is selected.
