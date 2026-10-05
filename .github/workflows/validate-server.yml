@@ -16,7 +16,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -30,7 +29,7 @@ jobs:
           node server.js > /tmp/ayaz-server.log 2>&1 &
           PID=$!
           trap 'kill $PID 2>/dev/null || true' EXIT
-          for i in {1..20}; do
+          for i in {1..30}; do
             if curl -fsS http://127.0.0.1:${PORT:-10000}/api/health > /tmp/health.json; then
               cat /tmp/health.json
               exit 0
