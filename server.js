@@ -124,7 +124,7 @@ async function refreshOpenAISora(job){
   return job;
 }
 async function refreshGeminiVeo(job){
-  const rr=await fetch(cfg.geminiBase+'/'+job.externalId.replace(/^https?:\\/\\/[^/]+\\//,'' )+'?key='+encodeURIComponent(cfg.geminiKey),{headers:{},signal:AbortSignal.timeout(30000)});
+  const rr=await fetch(cfg.geminiBase+'/'+job.externalId.replace(/^https?:\/\/[^/]+\//,'' )+'?key='+encodeURIComponent(cfg.geminiKey),{headers:{},signal:AbortSignal.timeout(30000)});
   const r=await rr.json().catch(()=>({}));
   if(!rr.ok) throw Error(r?.error?.message||'Gemini وضعیت Job را برنگرداند.');
   if(r.done){
@@ -204,7 +204,7 @@ app.get('/api/tasks/:id',auth,async(req,res)=>{
   res.json({status:j.status,url,error:j.error,engine:j.engine,provider:j.provider,quality:j.quality,steps:j.steps,progress:j.progress||0});
 });
 app.get('/api/tasks/:id/video',async(req,res)=>{
-  const t=String(req.query.token||'').replace(/^Bearer\\s+/i,'');
+  const t=String(req.query.token||'').replace(/^Bearer\s+/i,'');
   const s=sessions.get(t);if(!s)return res.status(401).send('نیاز به ورود دارید.');
   const d=db(),j=d.jobs.find(x=>x.taskId===req.params.id&&x.userId===s.id);
   if(!j||j.status!=='SUCCEEDED')return res.status(404).send('ویدئو آماده نیست.');
