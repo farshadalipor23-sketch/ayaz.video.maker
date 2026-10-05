@@ -85,7 +85,43 @@ const freePollers=new Set();
 async function pollFreeH3(job){if(freePollers.has(job.taskId))return false;freePollers.add(job.taskId);try{const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/generate/${encodeURIComponent(job.taskId)}`,{headers:cfg.freeKey?{Authorization:`Bearer ${cfg.freeKey}`}:{},signal:AbortSignal.timeout(27*60*1000)});if(!rr.ok)throw Error(`Free Engine status HTTP ${rr.status}`);if(!rr.body)throw Error('Free Engine پاسخ زنده (SSE) ندارد.');const reader=rr.body.getReader(),decoder=new TextDecoder();let buffer='',complete=null,failed=null;const consume=block=>{const em=block.match(/(?:^|\n)event:\s*([^\n]+)/),dm=block.match(/(?:^|\n)data:\s*([\s\S]*?)(?:\n|$)/);if(!em||!dm)return;let data;try{data=JSON.parse(dm[1].trim())}catch{data=dm[1].trim()}if(em[1].trim()==='complete')complete=data;if(em[1].trim()==='error')failed=data};while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\n\n/);buffer=blocks.pop()||'';for(const b of blocks)consume(b);if(failed||complete)break}if(buffer)consume(buffer);if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند.');const url=findOutputUrl(complete);if(!url)throw Error('ویدئو ساخته شد ولی لینک خروجی پیدا نشد.');const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(!j)return false;j.status='SUCCEEDED';j.url=url;j.completedAt=Date.now();j.error=undefined;activeJobs.set(j.taskId,j);save(d);return true}catch(e){const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}return false}finally{freePollers.delete(job.taskId)}}
 
 app.post('/api/generate',auth,async(req,res)=>{const d=req.db,u=req.user,prompt=String(req.body.prompt||'').trim(),promptImage=req.body.promptImage||null,hasImage=Boolean(promptImage),engine=hasImage?'runway':'free',duration=Number(req.body.duration||5);if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});if(duration<4||duration>30)return res.status(400).json({error:'مدت باید بین ۴ تا ۳۰ ثانیه باشد.'});const cost=chargeFor(u,d);if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});try{if(engine==='runway'){if(!cfg.runwayKey)return res.status(503).json({error:'برای تبدیل تصویر به ویدئو، Runway روی سرور تنظیم نشده است.'});const body={model:'seedance2_5',promptText:prompt,duration,ratio:req.body.ratio||'1280:720',promptImage};const result=await callJson(`${cfg.runwayBase}/text_to_video`,body,{Authorization:`Bearer ${cfg.runwayKey}`,'X-Runway-API-Version':'2024-11-06'});const taskId=result.id||result.taskId||result.data?.id;if(!taskId)throw Error('Runway شناسه Job برنگرداند.');const job={id:uid(),taskId,userId:u.id,day:day(),engine,status:'PROCESSING',createdAt:Date.now(),cost,duration};d.jobs.unshift(job);activeJobs.set(taskId,job);if(cost)u.wallet-=cost;save(d);return res.json({taskId,model:'Runway',duration,engine})}const submitted=await submitFreeH3(prompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false);const job={id:uid(),taskId:submitted.eventId,userId:u.id,day:day(),engine:'free',status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,quality:submitted.quality,steps:submitted.steps};d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);pollFreeH3(job).catch(()=>{});res.json({taskId:job.taskId,model:'MiniMax-H3 Free Engine',duration:submitted.duration,engine:'free',quality:submitted.quality,steps:submitted.steps})}catch(e){res.status(502).json({error:e.message||'خطا در موتور تولید'})}});
-app.get('/api/tasks/:id',auth,async(req,res)=>{const cached=activeJobs.get(req.params.id);if(cached&&cached.userId===req.user.id&&cached.engine==='free'){return res.json({status:cached.status,url:cached.url,error:cached.error,engine:cached.engine,quality:cached.quality,steps:cached.steps})}const d=req.db,u=req.user,j=d.jobs.find(x=>x.taskId===req.params.id&&x.userId===req.user.id);if(!u||!j)return res.status(404).json({error:'Job پیدا نشد.'});if(j.status==='PROCESSING'&&j.engine==='runway'){try{const rr=await fetch(`${cfg.runwayBase}/tasks/${encodeURIComponent(j.taskId)}`,{headers:{Authorization:`Bearer ${cfg.runwayKey}`,'X-Runway-API-Version':'2024-11-06'},signal:AbortSignal.timeout(30000)});const r=await rr.json();if(rr.ok){j.status=r.status||j.status;j.url=r.output?.[0]||r.output?.video_url||j.url;j.error=r.failure||r.error||j.error;activeJobs.set(j.taskId,j)}if(['FAILED','CANCELED'].includes(j.status)&&j.cost){u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j)}save(d)}catch(e){j.error=e.message;activeJobs.set(j.taskId,j);save(d)}}res.json({status:j.status,url:j.url,error:j.error,engine:j.engine,quality:j.quality,steps:j.steps})});
+app.get('/api/tasks/:id',auth,async(req,res)=>{
+  const taskId=req.params.id;
+  const cached=activeJobs.get(taskId);
+  if(cached&&cached.userId===req.user.id&&cached.engine==='free'){
+    return res.json({status:cached.status,url:cached.url,error:cached.error,engine:cached.engine,quality:cached.quality,steps:cached.steps});
+  }
+  const d=req.db,u=req.user,j=d.jobs.find(x=>x.taskId===taskId&&x.userId===u.id);
+  if(!j)return res.status(404).json({error:'Job پیدا نشد.'});
+  if(j.status==='PROCESSING'&&j.engine==='runway'){
+    try{
+      const rr=await fetch(`${cfg.runwayBase}/tasks/${encodeURIComponent(j.taskId)}`,{
+        headers:{Authorization:`Bearer ${cfg.runwayKey}`,'X-Runway-API-Version':'2024-11-06'},
+        signal:AbortSignal.timeout(30000)
+      });
+      const r=await rr.json().catch(()=>({}));
+      if(rr.ok){
+        j.status=r.status||j.status;
+        j.url=r.output?.[0]||r.output?.video_url||j.url;
+        j.error=r.failure||r.error||j.error;
+      }else{
+        j.error=r?.error?.message||r?.error||`Runway HTTP ${rr.status}`;
+      }
+      activeJobs.set(j.taskId,j);
+      if(['FAILED','CANCELED'].includes(j.status)&&j.cost){
+        u.wallet=Number(u.wallet||0)+j.cost;
+        j.cost=0;
+        j.refunded=true;
+      }
+      save(d);
+    }catch(e){
+      j.error=e.message||String(e);
+      activeJobs.set(j.taskId,j);
+      save(d);
+    }
+  }
+  res.json({status:j.status,url:j.url,error:j.error,engine:j.engine,quality:j.quality,steps:j.steps});
+});
 app.get('/api/admin',auth,admin,(req,res)=>res.json({ok:true}));
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath);res.status(404).send('index.html پیدا نشد.')});
