@@ -108,7 +108,7 @@ async function submitGeminiVeo(prompt,duration,ratio,promptImage){
     const m=String(promptImage).match(/^data:([^;]+);base64,(.+)$/s);
     if(m) instance.image={bytesBase64Encoded:m[2],mimeType:m[1]};
   }
-  const parameters={aspectRatio:ratio==='720:1280'?'9:16':'16:9',resolution:process.env.GEMINI_VIDEO_RESOLUTION||'720p'};
+  const parameters={aspectRatio:ratio==='720:1280'?'9:16':'16:9',durationSeconds:String(seconds),resolution:process.env.GEMINI_VIDEO_RESOLUTION||'720p'};
   const rr=await fetch(cfg.geminiBase+'/models/'+encodeURIComponent(model)+':predictLongRunning?key='+encodeURIComponent(cfg.geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[instance],parameters}),signal:AbortSignal.timeout(60000)});
   const body=await rr.json().catch(()=>({}));
   if(!rr.ok||!body.name) throw Error(body?.error?.message||'Gemini Veo خطا داد.');
