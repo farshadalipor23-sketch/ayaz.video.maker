@@ -266,11 +266,11 @@ async function uploadFreeFile(dataUri){const m=String(dataUri||'').match(/^data:
 async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,seed,ipToken){
   const d=Math.max(5,Math.min(15,Number(duration)||5));
   const q=quality==='ultra'?'ultra':quality==='high'?'high':'fast';
-  const steps=q==='ultra'?30:q==='high'?20:10;
+  const steps=q==='ultra'?10:q==='high'?8:6;
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
-  const args=[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample)];
+  const args=[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample),true,'larry'];
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
