@@ -312,9 +312,6 @@ if(process.env.SELF_TEST_H3==='1'){
     }catch(e){return res.status(502).json({error:e.message||String(e)})}
   });
 }
-app.get('/api/self-test-h3/status',authOptional,(req,res)=>{
-  const id=String(req.query.id||'');const j=db().jobs.find(x=>x.id===id);if(!j)return res.status(404).json({error:'not found'});res.json({id:j.id,status:j.status,progress:j.progress||0,url:j.url||null,error:j.error||null});
-});
 app.post('/api/generate',auth,async(req,res)=>{
   const d=req.db,u=req.user,prompt=String(req.body.prompt||'').trim(),negativePrompt=String(req.body.negativePrompt||'').trim(),promptImage=req.body.promptImage||null,hasImage=Boolean(promptImage),duration=Number(req.body.duration||5),model=normalizeVideoModel(req.body.model),resolution=['720p','1080p','4k'].includes(req.body.resolution)?req.body.resolution:'720p',seed=req.body.seed===''||req.body.seed==null?null:Number(req.body.seed);
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
