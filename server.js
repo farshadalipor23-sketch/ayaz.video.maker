@@ -11,6 +11,16 @@ app.use(express.json({ limit: '16mb' }));
 app.use(express.urlencoded({ extended: true, limit: '16mb' }));
 
 const publicOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '';
+function resolveIndexPath(){
+  const candidates=[path.join(__dirname,'index.html'),path.join(__dirname,'public','index.html'),path.join(process.cwd(),'index.html'),path.join(process.cwd(),'public','index.html')];
+  return candidates.find(p=>fs.existsSync(p))||null;
+}
+app.get('/',(req,res)=>{
+  const indexPath=resolveIndexPath();
+  if(!indexPath)return res.status(500).type('text/plain; charset=utf-8').send('AYAZ STUDIO: index.html پیدا نشد.');
+  return res.status(200).type('html').sendFile(indexPath,{dotfiles:'deny',etag:false,cacheControl:false});
+});
+
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || publicOrigin).split(',').map(x => x.trim()).filter(Boolean);
 const rateBuckets = new Map();
 function rateLimit({windowMs=60000,max=60,key='ip'}={}) {
@@ -450,7 +460,6 @@ app.use((err,req,res,next)=>{
   res.status(500).json({error:message});
 });
 
-app.get('/',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(500).send('index.html پیدا نشد.')});
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
 app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
