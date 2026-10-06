@@ -42,7 +42,7 @@ app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy',[
     "default-src 'self'","base-uri 'self'","object-src 'none'","frame-ancestors 'none'","form-action 'self'",
     "script-src 'self' 'unsafe-inline'","style-src 'self' 'unsafe-inline'","img-src 'self' data: blob: https:",
-    "media-src 'self' blob: https:","connect-src 'self' https://minimaxai-minimax-h3-turbo-lora.hf.space","font-src 'self' data:"
+    "media-src 'self' blob: https:","connect-src 'self'","font-src 'self' data:"
   ].join('; '));
   if(origin && !allowedOrigins.includes(origin) && !allowedOrigins.includes('*')) return res.status(403).json({error:'Origin مجاز نیست.'});
   if(origin && (allowedOrigins.includes('*') || allowedOrigins.includes(origin))) res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? '*' : origin);
@@ -113,9 +113,9 @@ function chooseVideoProvider(hasImage,model='auto',duration=6){
   return null;
 }
 function providerDuration(provider,duration){
-  const n=Math.max(4,Number(duration)||6);
+  const n=Math.max(5,Number(duration)||5);
   if(provider==='gemini') return n>8?8:n;
-  return Math.min(14,n);
+  return Math.min(15,n);
 }
 function dataUriToBlob(dataUri){
   const m=String(dataUri||'').match(/^data:([^;]+);base64,(.+)$/s);
@@ -270,7 +270,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
-  const args=[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample),true,'larry'];
+  const args=[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample)];
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
