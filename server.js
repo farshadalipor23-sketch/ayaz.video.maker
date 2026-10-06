@@ -234,7 +234,7 @@ function sendMp4(res,buf,source){
   res.setHeader('Cache-Control','private, max-age=300');
   return res.send(buf);
 }
-function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Authorization:`Bearer ${token}`,...extra} : {...extra}; }
+function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Authorization:`Bearer ${token}`,'x-hf-authorization':`Bearer ${token}`,...extra} : {...extra}; }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
 app.get('/api/ready',(req,res)=>{const freeReady=Boolean(cfg.freeUrl);const hfConfigured=Boolean(cfg.hfToken||cfg.freeKey);res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker',freeEngineConfigured:freeReady,hfTokenConfigured:hfConfigured,videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel});});
