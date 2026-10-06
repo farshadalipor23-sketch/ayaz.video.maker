@@ -258,7 +258,7 @@ app.post('/api/admin/users/:id/credit',auth,admin,(req,res)=>{const d=req.db,u=d
 app.post('/api/admin/users/:id/role',auth,admin,(req,res)=>{const d=req.db,u=d.users.find(x=>x.id===req.params.id);if(!u)return res.status(404).json({error:'کاربر یافت نشد.'});if(u.id===req.user.id&&req.body.role!=='admin')return res.status(400).json({error:'حساب Admin فعلی را نمی‌توان به کاربر عادی تبدیل کرد.'});u.role=req.body.role==='admin'?'admin':'user';save(d);res.json({ok:true,user:publicUser(d,u)})});
 app.post('/api/admin/settings/bank',auth,admin,(req,res)=>{const d=req.db;d.settings={...d.settings,bankName:String(req.body.bankName||'').trim(),accountHolder:String(req.body.accountHolder||'').trim(),cardNumber:String(req.body.cardNumber||'').trim(),iban:String(req.body.iban||'').trim(),bankNote:String(req.body.bankNote||'').trim()};save(d);res.json({ok:true,bank:safePublicSettings(d)})});
 
-function canvasFor(ratio,quality){if(ratio==='720:1280')return '544x960 · 9:16 fast';if(ratio==='960:960')return '768x768 · 1:1 full';return '960x544 · 16:9 fast (default)'}
+function canvasFor(ratio,quality){if(ratio==='720:1280')return '544x960 · 9:16 fast';if(ratio==='960:960')return '768x768 · 1:1 full';return '960x544 · 16:9 fast'}
 function findOutputUrl(value){let found=null;const walk=x=>{if(found||x==null)return;if(typeof x==='string'){if(/^https?:\/\//i.test(x))found=x;return}if(Array.isArray(x))return x.forEach(walk);if(typeof x==='object'){for(const k of ['url','video_url','download_url']){if(typeof x[k]==='string'&&/^https?:\/\//i.test(x[k])){found=x[k];return}}if(typeof x.video?.url==='string'&&/^https?:\/\//i.test(x.video.url)){found=x.video.url;return}Object.values(x).forEach(walk)}};walk(value);return found}
 function extractProgress(value){let best=null;const walk=(x,key='')=>{if(x==null||best!==null)return;if(typeof x==='object'){for(const [k,v] of Object.entries(x)){const lk=k.toLowerCase();if(typeof v==='number'&&Number.isFinite(v)){if(/percent|percentage|progress/.test(lk)){best=v<=1?v*100:v;return}}if(v&&typeof v==='object'&&/progress/.test(lk)){if(typeof v.progress=== 'number') {best=v.progress<=1?v.progress*100:v.progress;return}if(typeof v.current==='number'&&typeof v.total==='number'&&v.total>0){best=v.current/v.total*100;return}}walk(v,lk);if(best!==null)return}}else if(Array.isArray(x)){for(const v of x){walk(v,key);if(best!==null)return}}};walk(value);return best===null?null:Math.max(0,Math.min(99,Math.round(best)))}
 function findOutputPath(value){let found=null;const walk=x=>{if(found||x==null)return;if(Array.isArray(x))return x.forEach(walk);if(typeof x==='object'){if(typeof x.path==='string'&&x.path)found=x.path;else Object.values(x).forEach(walk)}};walk(value);return found}
@@ -270,7 +270,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
-  const payload={prompt,image_path:imagePath,last_image_path:null,canvas,duration:d,steps,seed:safeSeed,upsample:Boolean(upsample)};
+  const payload={prompt,first_frame:imagePath,last_frame:null,canvas,duration:d,steps,seed:safeSeed,upsample:Boolean(upsample),lora:'larry'};
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
