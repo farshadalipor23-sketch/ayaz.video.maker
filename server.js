@@ -313,7 +313,7 @@ app.post('/api/generate',auth,async(req,res)=>{
   try{
     const preferredProvider=chooseVideoProvider(hasImage,model,duration);
     if(!preferredProvider)return res.status(503).json({error:'هیچ موتور واقعی AI فعال نیست. Free MiniMax-H3 را فعال کنید.'});
-    if(preferredProvider==='free'&&!cfg.hfToken&&!cfg.freeKey)return res.status(503).json({error:'اتصال Hugging Face برای MiniMax-H3 در Runtime فعال نشده است. HF_TOKEN را در Railway همین سرویس/Environment تنظیم و Redeploy کنید.'});
+    // MiniMax-H3 Turbo LoRA is a public ZeroGPU Space; HF_TOKEN is optional. When present, it is used, otherwise the request uses the Space's anonymous/IP quota.
     const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
     const ipToken=String(req.headers['x-ip-token']||'').trim()||null;
     const result=await submitVideoWithFallback(effectivePrompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed,ipToken);
