@@ -75,10 +75,10 @@ function chooseVideoProvider(hasImage){
   return 'free';
 }
 function providerDuration(provider,duration){
-  const n=Number(duration)||6;
+  const n=Math.max(4,Number(duration)||6);
   if(provider==='gemini') return [4,6,8].reduce((a,b)=>Math.abs(b-n)<Math.abs(a-n)?b:a,8);
   if(provider==='openai') return [4,8,12].reduce((a,b)=>Math.abs(b-n)<Math.abs(a-n)?b:a,8);
-  return n;
+  return Math.min(15,n);
 }
 function dataUriToBlob(dataUri){
   const m=String(dataUri||'').match(/^data:([^;]+);base64,(.+)$/s);
@@ -134,6 +134,19 @@ async function refreshGeminiVeo(job){
     job.status='SUCCEEDED';
   }else job.status='PROCESSING';
   return job;
+}
+function isMp4Buffer(buf){
+  if(!Buffer.isBuffer(buf)||buf.length<16)return false;
+  const p=buf.subarray(0,64).toString('latin1');
+  return p.includes('ftyp');
+}
+function sendMp4(res,buf,source){
+  if(!isMp4Buffer(buf)) throw Error('Provider خروجی معتبر MP4 برنگرداند.');
+  res.setHeader('Content-Type','video/mp4');
+  res.setHeader('Content-Length',String(buf.length));
+  res.setHeader('Content-Disposition','inline; filename="ayaz-video.mp4"');
+  res.setHeader('Cache-Control','private, max-age=300');
+  return res.send(buf);
 }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
@@ -230,15 +243,15 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
   if(!j||j.status!=='SUCCEEDED')return res.status(404).send('ویدئو آماده نیست.');
   try{
     if(j.provider==='openai'){
-      const rr=await fetch(cfg.openaiBase+'/videos/'+encodeURIComponent(j.externalId)+'/content',{headers:{Authorization:'Bearer '+cfg.openaiKey},signal:AbortSignal.timeout(120000)});
+      const rr=await fetch(cfg.openaiBase+'/videos/'+encodeURIComponent(j.externalId)+'/content',{headers:{Authorization:'Bearer '+cfg.openaiKey},signal:AbortSignal.timeout(180000)});
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
-      res.setHeader('Content-Type','video/mp4');res.setHeader('Cache-Control','private, max-age=300');return res.send(Buffer.from(await rr.arrayBuffer()));
+      return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'openai');
     }
     if(j.provider==='gemini'){
       const uri=j.providerVideoUrl;if(!uri)return res.status(404).send('لینک ویدئو پیدا نشد.');
-      const rr=await fetch(uri+(uri.includes('?')?'&':'?')+'key='+encodeURIComponent(cfg.geminiKey),{signal:AbortSignal.timeout(120000)});
+      const rr=await fetch(uri+(uri.includes('?')?'&':'?')+'key='+encodeURIComponent(cfg.geminiKey),{signal:AbortSignal.timeout(180000)});
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
-      res.setHeader('Content-Type',rr.headers.get('content-type')||'video/mp4');res.setHeader('Cache-Control','private, max-age=300');return res.send(Buffer.from(await rr.arrayBuffer()));
+      return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'gemini');
     }
     return res.status(404).send('Provider نامعتبر است.');
   }catch(e){res.status(502).send(e.message||'خطا در دریافت ویدئو.')}
