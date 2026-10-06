@@ -486,4 +486,5 @@ app.use((err,req,res,next)=>{
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
-app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));\nsetTimeout(()=>{runH3SelfTest().catch(e=>console.error('[H3 SELF TEST]',e?.stack||e?.message||String(e)))},5000);
+app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
+setTimeout(()=>{runH3SelfTest().catch(e=>console.error('[H3 SELF TEST]',e?.stack||e?.message||String(e)))},5000);
