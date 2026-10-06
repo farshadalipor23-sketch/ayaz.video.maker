@@ -91,11 +91,12 @@ function dataUriToBlob(dataUri){
   if(!m) return null;
   return new Blob([Buffer.from(m[2],'base64')],{type:m[1]});
 }
-async function submitOpenAISora(prompt,duration,ratio,promptImage){
+async function submitOpenAISora(prompt,duration,ratio,promptImage,model='sora-2'){
   const seconds=providerDuration('openai',duration);
+  const selectedModel=model==='sora-2-pro'?'sora-2-pro':'sora-2';
   const size=ratio==='720:1280'?'720x1280':ratio==='960:960'?'720x1280':'1280x720';
   const form=new FormData();
-  form.append('model','sora-2');
+  form.append('model',selectedModel);
   form.append('prompt',prompt);
   form.append('seconds',String(seconds));
   form.append('size',size);
@@ -106,16 +107,20 @@ async function submitOpenAISora(prompt,duration,ratio,promptImage){
   if(!rr.ok||!body.id) throw Error(body?.error?.message||'OpenAI Sora خطا داد.');
   return {provider:'openai',externalId:body.id,duration:seconds};
 }
-async function submitGeminiVeo(prompt,duration,ratio,promptImage){
-  const seconds=providerDuration('gemini',duration);
-  const model=process.env.GEMINI_VIDEO_MODEL||'veo-3.1-fast-generate-preview';
+async function submitGeminiVeo(prompt,duration,ratio,promptImage,model='veo-fast',resolution='720p',seed=null){
+  let seconds=providerDuration('gemini',duration);
+  if(promptImage)seconds=8;
+  const selectedModel=model==='veo-pro'?'veo-3.1-generate-preview':(process.env.GEMINI_VIDEO_MODEL||'veo-3.1-fast-generate-preview');
   const instance={prompt};
   if(promptImage){
     const m=String(promptImage).match(/^data:([^;]+);base64,(.+)$/s);
     if(m) instance.image={bytesBase64Encoded:m[2],mimeType:m[1]};
   }
-  const parameters={aspectRatio:ratio==='720:1280'?'9:16':'16:9',durationSeconds:String(seconds),resolution:process.env.GEMINI_VIDEO_RESOLUTION||'720p'};
-  const rr=await fetch(cfg.geminiBase+'/models/'+encodeURIComponent(model)+':predictLongRunning?key='+encodeURIComponent(cfg.geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[instance],parameters}),signal:AbortSignal.timeout(60000)});
+  let selectedResolution=['720p','1080p','4k'].includes(resolution)?resolution:(process.env.GEMINI_VIDEO_RESOLUTION||'720p');
+  if(seconds!==8&&selectedResolution!=='720p')selectedResolution='720p';
+  const parameters={aspectRatio:ratio==='720:1280'?'9:16':'16:9',durationSeconds:String(seconds),resolution:selectedResolution};
+  if(Number.isInteger(Number(seed))&&Number(seed)>=0)parameters.seed=Number(seed);
+  const rr=await fetch(cfg.geminiBase+'/models/'+encodeURIComponent(selectedModel)+':predictLongRunning?key='+encodeURIComponent(cfg.geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[instance],parameters}),signal:AbortSignal.timeout(60000)});
   const body=await rr.json().catch(()=>({}));
   if(!rr.ok||!body.name) throw Error(body?.error?.message||'Gemini Veo خطا داد.');
   return {provider:'gemini',externalId:body.name,duration:seconds};
