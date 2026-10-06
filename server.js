@@ -136,15 +136,29 @@ async function refreshOpenAISora(job){
   return job;
 }
 async function refreshGeminiVeo(job){
-  const rr=await fetch(cfg.geminiBase+'/'+job.externalId.replace(/^https?:\/\/[^/]+\//,'' )+'?key='+encodeURIComponent(cfg.geminiKey),{headers:{},signal:AbortSignal.timeout(30000)});
-  const r=await rr.json().catch(()=>({}));
-  if(!rr.ok) throw Error(r?.error?.message||'Gemini وضعیت Job را برنگرداند.');
-  if(r.done){
+  if(!job?.externalId) throw Error('Gemini operation شناسه ندارد.');
+  const op=String(job.externalId);
+  const opPath=op.replace(/^https?:\\/\\/[^/]+\\//,'').replace(/^\\/+/, '');
+  const url=opPath.startsWith('v1beta/') ? cfg.geminiBase+'/'+opPath.slice(7) : cfg.geminiBase+'/'+opPath;
+  const rr=await fetch(url,{headers:{'x-goog-api-key':cfg.geminiKey},signal:AbortSignal.timeout(30000)});
+  const raw=await rr.text();
+  let r={};try{r=raw?JSON.parse(raw):{}}catch{throw Error('Gemini پاسخ JSON معتبر برنگرداند.')}
+  if(!rr.ok) throw Error(r?.error?.message||r?.error?.status||('Gemini status HTTP '+rr.status));
+  if(r.done===true){
     if(r.error){job.status='FAILED';job.error=r.error.message||JSON.stringify(r.error);return job}
-    const v=r.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
-    if(v?.uri) job.providerVideoUrl=v.uri;
+    const v=r.response?.generateVideoResponse?.generatedSamples?.[0]?.video
+      ||r.response?.generateVideoResponse?.generatedVideos?.[0]?.video
+      ||r.response?.generatedVideos?.[0]?.video;
+    if(!v?.uri) throw Error('Gemini عملیات تمام شد اما URI ویدئو در پاسخ وجود ندارد.');
+    job.providerVideoUrl=v.uri;
     job.status='SUCCEEDED';
-  }else job.status='PROCESSING';
+    job.progress=100;
+    job.finishedAt=Date.now();
+  }else{
+    job.status='PROCESSING';
+    if(typeof r.metadata?.progressPercent==='number') job.progress=Math.max(0,Math.min(99,Math.round(r.metadata.progressPercent)));
+    if(typeof r.metadata?.state==='string') job.stage=r.metadata.state;
+  }
   return job;
 }
 function isMp4Buffer(buf){
