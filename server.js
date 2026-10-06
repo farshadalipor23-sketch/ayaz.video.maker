@@ -23,7 +23,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 10000);
 const PERSIST_ROOT = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
 const DB = process.env.DB_FILE || path.join(PERSIST_ROOT, 'db.json');
 const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(PERSIST_ROOT, 'videos');
