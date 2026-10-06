@@ -277,7 +277,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
       const rr=await fetch(cfg.freeUrl+'/gradio_api/call/v2/generate',{method:'POST',headers:hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(ipToken?{'X-IP-Token':ipToken}:{})}),body:JSON.stringify(payload),signal:AbortSignal.timeout(90000)});
       const raw=await rr.text(); let body={}; try{body=raw?JSON.parse(raw):{}}catch{}
       if(rr.ok&&body.event_id)return{eventId:body.event_id,duration:d,quality:q,steps};
-      const msg=String(body?.error||body?.detail||raw||'').trim(); if(rr.status===401||rr.status===403) last='Hugging Face احراز هویت نشد؛ HF_TOKEN معتبر یا سهمیه ZeroGPU لازم است.'; else if(rr.status===429) last='Hugging Face/ZeroGPU فعلاً سهمیه یا ظرفیت کافی ندارد.'; else if(rr.status>=500) last='سرویس MiniMax-H3 در Hugging Face خطای موقت upstream داد؛ درخواست دوباره تلاش می‌شود.'; else last=msg.slice(0,500)||('Free Engine HTTP '+rr.status);
+      const msg=String(body?.error||body?.detail||raw||'').trim(); if(rr.status===401||rr.status===403) last='Hugging Face احراز هویت نشد؛ HF_TOKEN معتبر یا سهمیه ZeroGPU لازم است.'; else if(rr.status===429) last='Hugging Face/ZeroGPU فعلاً سهمیه یا ظرفیت کافی ندارد.'; else if(rr.status>=500) last='MiniMax-H3 upstream HTTP '+rr.status+': '+msg.slice(0,500); else last=msg.slice(0,500)||('Free Engine HTTP '+rr.status);
     }catch(e){last=e.message||String(e)}
     if(attempt<4)await new Promise(r=>setTimeout(r,4000));
   }
