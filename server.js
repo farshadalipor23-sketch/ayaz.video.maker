@@ -421,11 +421,17 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
       return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'gemini');
     }
     if(j.provider==='free'){
+      if(j.localOutputPath && fs.existsSync(j.localOutputPath)){
+        return sendMp4(res,await fs.promises.readFile(j.localOutputPath),'minimax-h3-cache');
+      }
       const uri=j.url;
       if(!uri)return res.status(404).send('لینک ویدئوی MiniMax-H3 پیدا نشد.');
       const rr=await fetch(uri,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
-      return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'minimax-h3');
+      const buf=Buffer.from(await rr.arrayBuffer());
+      sendMp4(res,buf,'minimax-h3');
+      try{await cacheMp4(j,buf);const d2=db(),j2=d2.jobs.find(x=>x.taskId===j.taskId);if(j2){j2.localOutputPath=j.localOutputPath;j2.outputBytes=buf.length;j2.completedAt=j.completedAt;save(d2)}}catch(e){console.error('[Ayaz Video Maker] MP4 cache failed',e.message||String(e))}
+      return;
     }
     return res.status(404).send('Provider نامعتبر است.');
   }catch(e){res.status(502).send(e.message||'خطا در دریافت ویدئو.')}
