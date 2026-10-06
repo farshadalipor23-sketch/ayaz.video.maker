@@ -69,7 +69,7 @@ function publicUser(d,u){return{id:u.id,email:u.email,role:u.role,wallet:Number(
 function chargeFor(u,d){const q=usage(d,u);if(q.unlimited||q.used<q.limit)return 0;return cfg.price}
 async function callJson(url,body,headers={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});let x={};try{x=await r.json()}catch{}if(!r.ok)throw Error(x?.error?.message||x?.errors?.message||x?.error||`HTTP ${r.status}`);return x}
 function normalizeVideoModel(model){const m=String(model||cfg.defaultVideoModel||'auto').trim().toLowerCase();return ['auto','veo-fast','veo-pro','sora-2','sora-2-pro','minimax-h3'].includes(m)?m:'auto'}
-function chooseVideoProvider(hasImage,model='auto'){
+function chooseVideoProvider(hasImage,model='auto',duration=6){
   const m=normalizeVideoModel(model);
   if(m==='minimax-h3')return 'free';
   if(m==='sora-2'||m==='sora-2-pro')return cfg.openaiKey?'openai':(cfg.geminiKey?'gemini':'free');
@@ -77,6 +77,8 @@ function chooseVideoProvider(hasImage,model='auto'){
   if(cfg.videoProvider==='gemini') return cfg.geminiKey?'gemini':(cfg.openaiKey?'openai':'free');
   if(cfg.videoProvider==='openai') return cfg.openaiKey?'openai':(cfg.geminiKey?'gemini':'free');
   if(cfg.videoProvider==='free') return 'free';
+  const requestedDuration=Math.max(4,Number(duration)||6);
+  if(requestedDuration>8&&cfg.openaiKey) return 'openai';
   if(cfg.geminiKey) return 'gemini';
   if(cfg.openaiKey) return 'openai';
   return 'free';
@@ -133,6 +135,7 @@ async function refreshOpenAISora(job){
   job.status=r.status==='completed'?'SUCCEEDED':r.status==='failed'?'FAILED':'PROCESSING';
   job.progress=Number(r.progress||0);
   if(r.error?.message) job.error=r.error.message;
+  if(job.status==='PROCESSING') { job.pollFailures=0; job.lastPollError=null; }
   return job;
 }
 async function refreshGeminiVeo(job){
@@ -153,11 +156,15 @@ async function refreshGeminiVeo(job){
     job.providerVideoUrl=v.uri;
     job.status='SUCCEEDED';
     job.progress=100;
+    job.pollFailures=0;
+    job.lastPollError=null;
     job.finishedAt=Date.now();
   }else{
     job.status='PROCESSING';
     if(typeof r.metadata?.progressPercent==='number') job.progress=Math.max(0,Math.min(99,Math.round(r.metadata.progressPercent)));
     if(typeof r.metadata?.state==='string') job.stage=r.metadata.state;
+    job.pollFailures=0;
+    job.lastPollError=null;
   }
   return job;
 }
@@ -203,7 +210,7 @@ function extractProgress(value){let best=null;const walk=(x,key='')=>{if(x==null
 function findOutputPath(value){let found=null;const walk=x=>{if(found||x==null)return;if(Array.isArray(x))return x.forEach(walk);if(typeof x==='object'){if(typeof x.path==='string'&&x.path)found=x.path;else Object.values(x).forEach(walk)}};walk(value);return found}
 async function submitFreeH3(prompt,duration,ratio,quality,upsample){const d=Math.max(2,Math.min(14,Number(duration)||5));const q=quality==='ultra'?'ultra':quality==='high'?'high':'fast';const steps=q==='ultra'?18:q==='high'?14:10;const args=[prompt,null,null,canvasFor(ratio,q),d,steps,42,Boolean(upsample)];const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/generate`,{method:'POST',headers:{'Content-Type':'application/json',...(cfg.freeKey?{Authorization:`Bearer ${cfg.freeKey}`}:{})},body:JSON.stringify({data:args}),signal:AbortSignal.timeout(45000)});const body=await rr.json().catch(()=>({}));if(!rr.ok||!body.event_id)throw Error(body.error||`Free Engine HTTP ${rr.status}`);return{eventId:body.event_id,duration:d,quality:q,steps}}
 const freePollers=new Set();
-async function pollFreeH3(job){if(freePollers.has(job.taskId))return false;freePollers.add(job.taskId);try{const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/generate/${encodeURIComponent(job.taskId)}`,{headers:cfg.freeKey?{Authorization:`Bearer ${cfg.freeKey}`}:{},signal:AbortSignal.timeout(27*60*1000)});if(!rr.ok)throw Error(`Free Engine status HTTP ${rr.status}`);if(!rr.body)throw Error('Free Engine پاسخ زنده (SSE) ندارد.');const reader=rr.body.getReader(),decoder=new TextDecoder();let buffer='',complete=null,failed=null;const consume=block=>{const normalized=block.replace(/\r/g,'');const em=normalized.match(/(?:^|\n)event:\s*([^\n]+)/),lines=normalized.split('\n').filter(x=>/^data:\s*/.test(x));if(!em||!lines.length)return;const raw=lines.map(x=>x.replace(/^data:\s*/,'')).join('').trim();let data;try{data=JSON.parse(raw)}catch{data=raw}const eventName=em[1].trim();if(eventName==='complete')complete=data;if(eventName==='error')failed=data;if(eventName==='generating'||eventName==='status'||eventName==='process_starts'){const p=extractProgress(data),s=(data&&typeof data==='object')?data:{};const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){if(p!==null)j.progress=p;const findNum=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='number'&&Number.isFinite(v)){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const findVal=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='string'){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const eta=findNum(data,['eta']);const pos=findNum(data,['position','rank']);const qs=findNum(data,['queue_size','queueSize','size']);const stage=findVal(data,['stage','status']);if(eta!==null)j.eta=Math.max(0,Math.round(eta));if(pos!==null)j.queuePosition=pos;if(qs!==null)j.queueSize=qs;if(stage)j.stage=stage;const pd=findNum(data,['progress']);if(pd!==null)j.progress=Math.max(0,Math.min(99,Math.round((pd<=1?pd*100:pd))));activeJobs.set(j.taskId,j);save(d)}}};while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const b of blocks)consume(b);if(failed||complete)break}if(buffer)consume(buffer);if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند.');const url=findOutputUrl(complete);const outputPath=url?null:findOutputPath(complete);const finalUrl=url||(outputPath?cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath):null);if(!finalUrl)throw Error('ویدئو ساخته شد ولی لینک خروجی پیدا نشد.');const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(!j)return false;j.status='SUCCEEDED';j.url=finalUrl;j.completedAt=Date.now();j.error=undefined;activeJobs.set(j.taskId,j);save(d);return true}catch(e){const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}return false}finally{freePollers.delete(job.taskId)}}
+async function pollFreeH3(job){if(freePollers.has(job.taskId))return false;freePollers.add(job.taskId);try{const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/generate/${encodeURIComponent(job.taskId)}`,{headers:cfg.freeKey?{Authorization:`Bearer ${cfg.freeKey}`}:{},signal:AbortSignal.timeout(27*60*1000)});if(!rr.ok)throw Error(`Free Engine status HTTP ${rr.status}`);if(!rr.body)throw Error('Free Engine پاسخ زنده (SSE) ندارد.');const reader=rr.body.getReader(),decoder=new TextDecoder();let buffer='',complete=null,failed=null;const consume=block=>{const normalized=block.replace(/\r/g,'');const em=normalized.match(/(?:^|\n)event:\s*([^\n]+)/),lines=normalized.split('\n').filter(x=>/^data:\s*/.test(x));if(!em||!lines.length)return;const raw=lines.map(x=>x.replace(/^data:\s*/,'')).join('').trim();let data;try{data=JSON.parse(raw)}catch{data=raw}const eventName=em[1].trim();if(eventName==='complete')complete=data;if(eventName==='error')failed=data;if(eventName==='generating'||eventName==='status'||eventName==='process_starts'){const p=extractProgress(data),s=(data&&typeof data==='object')?data:{};const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){if(p!==null){j.progress=p;j.pollFailures=0;j.lastPollError=null;}const findNum=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='number'&&Number.isFinite(v)){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const findVal=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='string'){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const eta=findNum(data,['eta']);const pos=findNum(data,['position','rank']);const qs=findNum(data,['queue_size','queueSize','size']);const stage=findVal(data,['stage','status']);if(eta!==null)j.eta=Math.max(0,Math.round(eta));if(pos!==null)j.queuePosition=pos;if(qs!==null)j.queueSize=qs;if(stage)j.stage=stage;const pd=findNum(data,['progress']);if(pd!==null)j.progress=Math.max(0,Math.min(99,Math.round((pd<=1?pd*100:pd))));activeJobs.set(j.taskId,j);save(d)}}};while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const b of blocks)consume(b);if(failed||complete)break}if(buffer)consume(buffer);if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند.');const url=findOutputUrl(complete);const outputPath=url?null:findOutputPath(complete);const finalUrl=url||(outputPath?cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath):null);if(!finalUrl)throw Error('ویدئو ساخته شد ولی لینک خروجی پیدا نشد.');const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(!j)return false;j.status='SUCCEEDED';j.url=finalUrl;j.completedAt=Date.now();j.error=undefined;activeJobs.set(j.taskId,j);save(d);return true}catch(e){const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}return false}finally{freePollers.delete(job.taskId)}}
 
 async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,promptImage,preferredProvider,model='auto',resolution='720p',seed=null){
   const order=preferredProvider==='free'?['free']:preferredProvider==='openai'?['openai','gemini','free']:['gemini','openai','free'];
@@ -232,7 +239,7 @@ app.post('/api/generate',auth,async(req,res)=>{
   const cost=chargeFor(u,d);
   if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
   try{
-    const preferredProvider=chooseVideoProvider(hasImage,model);
+    const preferredProvider=chooseVideoProvider(hasImage,model,duration);
     const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
     const result=await submitVideoWithFallback(effectivePrompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed);
     const submitted=result.submitted;
@@ -240,12 +247,12 @@ app.post('/api/generate',auth,async(req,res)=>{
     if(result.provider==='openai'){
       job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'openai',provider:'openai',model:model==='auto'?'sora-2':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,fallbackAttempts:result.attempts};
       d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
-      return res.json({taskId:job.taskId,model:'OpenAI Sora 2',duration:job.duration,engine:'openai',provider:'openai',fallbackAttempts:result.attempts});
+      return res.json({taskId:job.taskId,model:job.model,duration:job.duration,requestedDuration:job.requestedDuration,engine:'openai',provider:'openai',fallbackAttempts:result.attempts});
     }
     if(result.provider==='gemini'){
       job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'gemini',provider:'gemini',model:model==='auto'?'veo-fast':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,fallbackAttempts:result.attempts};
       d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
-      return res.json({taskId:job.taskId,model:'Gemini Veo 3.1 Fast',duration:job.duration,engine:'gemini',provider:'gemini',fallbackAttempts:result.attempts});
+      return res.json({taskId:job.taskId,model:job.model,duration:job.duration,requestedDuration:job.requestedDuration,engine:'gemini',provider:'gemini',fallbackAttempts:result.attempts});
     }
     job={id:uid(),taskId:submitted.eventId,userId:u.id,day:day(),engine:'free',provider:'free',model:'minimax-h3',status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts};
     d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);pollFreeH3(job).catch(()=>{});
@@ -342,6 +349,13 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
   }catch(e){res.status(502).send(e.message||'خطا در دریافت ویدئو.')}
 });
 app.get('/api/admin',auth,admin,(req,res)=>res.json({ok:true}));
+app.use((err,req,res,next)=>{
+  const message=err?.message||'خطای داخلی سرور.';
+  console.error('[Ayaz Video Maker]',message);
+  if(res.headersSent)return next(err);
+  res.status(500).json({error:message});
+});
+
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath);res.status(404).send('index.html پیدا نشد.')});
 app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT}`));
