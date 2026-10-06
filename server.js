@@ -200,27 +200,31 @@ async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,pr
 }
 
 app.post('/api/generate',auth,async(req,res)=>{
-  const d=req.db,u=req.user,prompt=String(req.body.prompt||'').trim(),promptImage=req.body.promptImage||null,hasImage=Boolean(promptImage),duration=Number(req.body.duration||5);
+  const d=req.db,u=req.user,prompt=String(req.body.prompt||'').trim(),negativePrompt=String(req.body.negativePrompt||'').trim(),promptImage=req.body.promptImage||null,hasImage=Boolean(promptImage),duration=Number(req.body.duration||5),model=normalizeVideoModel(req.body.model),resolution=['720p','1080p','4k'].includes(req.body.resolution)?req.body.resolution:'720p',seed=req.body.seed===''||req.body.seed==null?null:Number(req.body.seed);
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
+  if(prompt.length>4000||negativePrompt.length>1000)return res.status(400).json({error:'متن پرامپت بیش از حد مجاز است.'});
+  if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
+  if((model==='sora-2'||model==='sora-2-pro')&&(req.body.ratio||'1280:720')==='960:960')return res.status(400).json({error:'Sora نسبت 1:1 را پشتیبانی نمی‌کند؛ 16:9 یا 9:16 را انتخاب کنید.'});
   if(duration<4||duration>30)return res.status(400).json({error:'مدت باید بین ۴ تا ۳۰ ثانیه باشد.'});
   const cost=chargeFor(u,d);
   if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
   try{
-    const preferredProvider=chooseVideoProvider(hasImage);
-    const result=await submitVideoWithFallback(prompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider);
+    const preferredProvider=chooseVideoProvider(hasImage,model);
+    const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
+    const result=await submitVideoWithFallback(effectivePrompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed);
     const submitted=result.submitted;
     let job;
     if(result.provider==='openai'){
-      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'openai',provider:'openai',status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',fallbackAttempts:result.attempts};
+      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'openai',provider:'openai',model:model==='auto'?'sora-2':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,fallbackAttempts:result.attempts};
       d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
       return res.json({taskId:job.taskId,model:'OpenAI Sora 2',duration:job.duration,engine:'openai',provider:'openai',fallbackAttempts:result.attempts});
     }
     if(result.provider==='gemini'){
-      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'gemini',provider:'gemini',status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',fallbackAttempts:result.attempts};
+      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'gemini',provider:'gemini',model:model==='auto'?'veo-fast':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',fallbackAttempts:result.attempts};
       d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
       return res.json({taskId:job.taskId,model:'Gemini Veo 3.1 Fast',duration:job.duration,engine:'gemini',provider:'gemini',fallbackAttempts:result.attempts});
     }
-    job={id:uid(),taskId:submitted.eventId,userId:u.id,day:day(),engine:'free',provider:'free',status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts};
+    job={id:uid(),taskId:submitted.eventId,userId:u.id,day:day(),engine:'free',provider:'free',model:'minimax-h3',status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts};
     d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);pollFreeH3(job).catch(()=>{});
     return res.json({taskId:job.taskId,model:'MiniMax-H3 Free Engine',duration:job.duration,engine:'free',provider:'free',quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts});
   }catch(e){res.status(502).json({error:e.message||'خطا در موتور تولید'})}
