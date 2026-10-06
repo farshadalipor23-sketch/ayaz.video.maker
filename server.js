@@ -236,7 +236,7 @@ function sendMp4(res,buf,source){
 }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
-app.get('/api/ready',(req,res)=>res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker'}));
+app.get('/api/ready',(req,res)=>{const freeReady=Boolean(cfg.freeUrl);const hfConfigured=Boolean(cfg.hfToken||cfg.freeKey);res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker',freeEngineConfigured:freeReady,hfTokenConfigured:hfConfigured,videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel});});
 app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),hfTokenConfigured:Boolean(cfg.hfToken),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl),minimaxH3Turbo:Boolean(cfg.freeUrl)},minDuration:4,maxDuration:30,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
 app.post('/api/auth/register',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!/^\S+@\S+\.\S+$/.test(email)||password.length<6)return res.status(400).json({error:'ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری لازم است.'});const d=db();if(d.users.some(u=>u.email===email))return res.status(409).json({error:'این کاربر قبلاً ثبت شده است.'});const u={id:uid(),email,passwordHash:hash(password),role:'user',wallet:0,createdAt:Date.now()};d.users.push(u);save(d);const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
 app.post('/api/auth/login',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');const d=db();let u=d.users.find(x=>x.email===email);if(!u&&email===cfg.adminEmail&&cfg.adminPassword!=='CHANGE_THIS_STRONG_PASSWORD'){u={id:'admin',email:cfg.adminEmail,passwordHash:hash(cfg.adminPassword),role:'admin',wallet:0,createdAt:Date.now()};d.users.push(u);save(d)}if(!u||!check(password,u.passwordHash))return res.status(401).json({error:'ایمیل یا رمز عبور نادرست است.'});const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
@@ -295,7 +295,8 @@ async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,pr
       return {provider:'free',submitted:await submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,seed,ipToken),attempts};
     }catch(e){attempts.push(provider+': '+(e?.message||String(e)));}
   }
-  throw Error('Free MiniMax-H3: '+(attempts.join(' | ')||'Free Engine API unavailable'));
+  const detail=attempts.join(' | ')||'Free Engine API unavailable';
+  throw Error(detail.replace(/^free:\s*/i,''));
 }
 
 app.post('/api/generate',auth,async(req,res)=>{
@@ -311,6 +312,7 @@ app.post('/api/generate',auth,async(req,res)=>{
   try{
     const preferredProvider=chooseVideoProvider(hasImage,model,duration);
     if(!preferredProvider)return res.status(503).json({error:'هیچ موتور واقعی AI فعال نیست. Free MiniMax-H3 را فعال کنید.'});
+    if(preferredProvider==='free'&&!cfg.hfToken&&!cfg.freeKey)return res.status(503).json({error:'اتصال Hugging Face برای MiniMax-H3 در Runtime فعال نشده است. HF_TOKEN را در Railway همین سرویس/Environment تنظیم و Redeploy کنید.'});
     const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
     const ipToken=String(req.headers['x-ip-token']||'').trim()||null;
     const result=await submitVideoWithFallback(effectivePrompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed,ipToken);
