@@ -43,7 +43,8 @@ const cfg = {
   price: Number(process.env.PRICE_PER_VIDEO || 10000),
   userFree: Number(process.env.DAILY_FREE_USER || 5),
   adminFree: Number(process.env.DAILY_FREE_ADMIN || 80),
-  currency: process.env.CURRENCY || 'IRT'
+  currency: process.env.CURRENCY || 'IRT',
+  defaultVideoModel: (process.env.VIDEO_MODEL || 'auto').trim().toLowerCase()
 };
 
 function getIndexFilePath() {
@@ -66,7 +67,12 @@ function usage(d,u){const ds=day();const n=d.jobs.filter(j=>j.userId===u.id&&j.d
 function publicUser(d,u){return{id:u.id,email:u.email,role:u.role,wallet:Number(u.wallet||0),usage:usage(d,u)}}
 function chargeFor(u,d){const q=usage(d,u);if(q.unlimited||q.used<q.limit)return 0;return cfg.price}
 async function callJson(url,body,headers={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});let x={};try{x=await r.json()}catch{}if(!r.ok)throw Error(x?.error?.message||x?.errors?.message||x?.error||`HTTP ${r.status}`);return x}
-function chooseVideoProvider(hasImage){
+function normalizeVideoModel(model){const m=String(model||cfg.defaultVideoModel||'auto').trim().toLowerCase();return ['auto','veo-fast','veo-pro','sora-2','sora-2-pro','minimax-h3'].includes(m)?m:'auto'}
+function chooseVideoProvider(hasImage,model='auto'){
+  const m=normalizeVideoModel(model);
+  if(m==='minimax-h3')return 'free';
+  if(m==='sora-2'||m==='sora-2-pro')return cfg.openaiKey?'openai':(cfg.geminiKey?'gemini':'free');
+  if(m==='veo-fast'||m==='veo-pro')return cfg.geminiKey?'gemini':(cfg.openaiKey?'openai':'free');
   if(cfg.videoProvider==='gemini') return cfg.geminiKey?'gemini':(cfg.openaiKey?'openai':'free');
   if(cfg.videoProvider==='openai') return cfg.openaiKey?'openai':(cfg.geminiKey?'gemini':'free');
   if(cfg.videoProvider==='free') return 'free';
