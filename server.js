@@ -21,7 +21,19 @@ app.get('/',(req,res)=>{
   return res.status(200).type('html').sendFile(indexPath,{dotfiles:'deny',etag:false,cacheControl:false});
 });
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || publicOrigin).split(',').map(x => x.trim()).filter(Boolean);
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || publicOrigin).split(',').map(x => x.trim()).filter(Boolean);
+function isAllowedOrigin(req, origin){
+  if(!origin) return true;
+  if(configuredOrigins.includes('*') || configuredOrigins.includes(origin)) return true;
+  try{
+    const u=new URL(origin);
+    const host=String(req.headers.host||'').split(':')[0].toLowerCase();
+    const originHost=u.hostname.toLowerCase();
+    if(u.protocol==='https:' && host && originHost===host) return true;
+    if((originHost==='localhost'||originHost==='127.0.0.1') && (u.protocol==='http:'||u.protocol==='https:')) return true;
+  }catch{}
+  return false;
+}
 const rateBuckets = new Map();
 function rateLimit({windowMs=60000,max=60,key='ip'}={}) {
   return (req,res,next)=>{
@@ -54,8 +66,8 @@ app.use((req, res, next) => {
     "script-src 'self' 'unsafe-inline'","style-src 'self' 'unsafe-inline'","img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:","connect-src 'self'","font-src 'self' data:"
   ].join('; '));
-  if(origin && !allowedOrigins.includes(origin) && !allowedOrigins.includes('*')) return res.status(403).json({error:'Origin مجاز نیست.'});
-  if(origin && (allowedOrigins.includes('*') || allowedOrigins.includes(origin))) res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? '*' : origin);
+  if(origin && !isAllowedOrigin(req,origin)) return res.status(403).json({error:'Origin مجاز نیست.'});
+  if(origin && isAllowedOrigin(req,origin)) res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Runway-Key');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
