@@ -450,6 +450,7 @@ app.use((err,req,res,next)=>{
   res.status(500).json({error:message});
 });
 
+app.get('/',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(500).send('index.html پیدا نشد.')});
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
-app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath);res.status(404).send('index.html پیدا نشد.')});
+app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
 app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
