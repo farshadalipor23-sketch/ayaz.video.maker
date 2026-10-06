@@ -10,7 +10,21 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '16mb' }));
 app.use(express.urlencoded({ extended: true, limit: '16mb' }));
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*').split(',').map(x => x.trim()).filter(Boolean);
+const publicOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '';
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || publicOrigin).split(',').map(x => x.trim()).filter(Boolean);
+const rateBuckets = new Map();
+function rateLimit({windowMs=60000,max=60,key='ip'}={}) {
+  return (req,res,next)=>{
+    const identity = key==='user' ? String(req.headers.authorization||'anon') : String(req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0].trim();
+    const bucketKey = key + ':' + identity + ':' + req.path;
+    const now=Date.now(), b=rateBuckets.get(bucketKey);
+    if(!b || now-b.startedAt>=windowMs){rateBuckets.set(bucketKey,{startedAt:now,count:1});return next();}
+    b.count++;
+    if(b.count>max){res.setHeader('Retry-After',String(Math.ceil((b.startedAt+windowMs-now)/1000)));return res.status(429).json({error:'تعداد درخواست‌ها بیش از حد مجاز است. چند لحظه بعد دوباره تلاش کنید.'});}
+    next();
+  };
+}
+setInterval(()=>{const cutoff=Date.now()-120000;for(const [k,v] of rateBuckets)if(v.startedAt<cutoff)rateBuckets.delete(k)},60000).unref();
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
     res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -18,9 +32,20 @@ app.use((req, res, next) => {
     res.setHeader('Expires','0');
   }
   const origin = req.headers.origin;
-  if (allowedOrigins.includes('*') || (origin && allowedOrigins.includes(origin))) {
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? '*' : origin);
-  }
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('X-Frame-Options','DENY');
+  res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=(), payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy','same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy','same-origin');
+  res.setHeader('Strict-Transport-Security','max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy',[
+    "default-src 'self'","base-uri 'self'","object-src 'none'","frame-ancestors 'none'","form-action 'self'",
+    "script-src 'self' 'unsafe-inline'","style-src 'self' 'unsafe-inline'","img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:","connect-src 'self' https://minimaxai-minimax-h3-turbo-lora.hf.space","font-src 'self' data:"
+  ].join('; '));
+  if(origin && !allowedOrigins.includes(origin) && !allowedOrigins.includes('*')) return res.status(403).json({error:'Origin مجاز نیست.'});
+  if(origin && (allowedOrigins.includes('*') || allowedOrigins.includes(origin))) res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? '*' : origin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Runway-Key');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -67,6 +92,9 @@ function uid(){return crypto.randomBytes(12).toString('hex')}
 function token(id){return Buffer.from(`${id}.${Date.now()}.${crypto.randomBytes(24).toString('hex')}`).toString('base64url')}
 const sessions=new Map();
 const activeJobs=new Map();
+app.use('/api/auth/login', rateLimit({max:8,key:'ip'}));
+app.use('/api/auth/register', rateLimit({max:5,key:'ip'}));
+app.use('/api/generate', rateLimit({max:3,key:'user'}));
 function auth(req,res,next){const t=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');const s=sessions.get(t);if(!s)return res.status(401).json({error:'نیاز به ورود دارید.'});const d=db(),u=d.users.find(x=>x.id===s.id);if(!u)return res.status(401).json({error:'کاربر یافت نشد.'});req.user=u;req.db=d;req.token=t;next()}
 function admin(req,res,next){if(req.user?.role!=='admin')return res.status(403).json({error:'دسترسی فقط برای Admin مجاز است.'});next()}
 function day(){return new Date().toISOString().slice(0,10)}
@@ -207,9 +235,10 @@ function sendMp4(res,buf,source){
 }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
+app.get('/api/ready',(req,res)=>res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker'}));
 app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl),minimaxH3Turbo:Boolean(cfg.freeUrl)},minDuration:4,maxDuration:30,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
 app.post('/api/auth/register',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!/^\S+@\S+\.\S+$/.test(email)||password.length<6)return res.status(400).json({error:'ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری لازم است.'});const d=db();if(d.users.some(u=>u.email===email))return res.status(409).json({error:'این کاربر قبلاً ثبت شده است.'});const u={id:uid(),email,passwordHash:hash(password),role:'user',wallet:0,createdAt:Date.now()};d.users.push(u);save(d);const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
-app.post('/api/auth/login',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');const d=db();let u=d.users.find(x=>x.email===email);if(!u&&email===cfg.adminEmail){u={id:'admin',email:cfg.adminEmail,passwordHash:hash(cfg.adminPassword),role:'admin',wallet:0,createdAt:Date.now()};d.users.push(u);save(d)}if(!u||!check(password,u.passwordHash))return res.status(401).json({error:'ایمیل یا رمز عبور نادرست است.'});const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
+app.post('/api/auth/login',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');const d=db();let u=d.users.find(x=>x.email===email);if(!u&&email===cfg.adminEmail&&cfg.adminPassword!=='CHANGE_THIS_STRONG_PASSWORD'){u={id:'admin',email:cfg.adminEmail,passwordHash:hash(cfg.adminPassword),role:'admin',wallet:0,createdAt:Date.now()};d.users.push(u);save(d)}if(!u||!check(password,u.passwordHash))return res.status(401).json({error:'ایمیل یا رمز عبور نادرست است.'});const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
 app.get('/api/auth/me',auth,(req,res)=>res.json({user:publicUser(req.db,req.user)}));
 app.post('/api/auth/logout',auth,(req,res)=>{sessions.delete(req.token);res.json({ok:true})});
 app.get('/api/wallet',auth,(req,res)=>res.json({wallet:Number(req.user.wallet||0),usage:usage(req.db,req.user),pricePerVideo:cfg.price,currency:cfg.currency,bank:safePublicSettings(req.db)}));
@@ -232,13 +261,14 @@ function findOutputUrl(value){let found=null;const walk=x=>{if(found||x==null)re
 function extractProgress(value){let best=null;const walk=(x,key='')=>{if(x==null||best!==null)return;if(typeof x==='object'){for(const [k,v] of Object.entries(x)){const lk=k.toLowerCase();if(typeof v==='number'&&Number.isFinite(v)){if(/percent|percentage|progress/.test(lk)){best=v<=1?v*100:v;return}}if(v&&typeof v==='object'&&/progress/.test(lk)){if(typeof v.progress=== 'number') {best=v.progress<=1?v.progress*100:v.progress;return}if(typeof v.current==='number'&&typeof v.total==='number'&&v.total>0){best=v.current/v.total*100;return}}walk(v,lk);if(best!==null)return}}else if(Array.isArray(x)){for(const v of x){walk(v,key);if(best!==null)return}}};walk(value);return best===null?null:Math.max(0,Math.min(99,Math.round(best)))}
 function findOutputPath(value){let found=null;const walk=x=>{if(found||x==null)return;if(Array.isArray(x))return x.forEach(walk);if(typeof x==='object'){if(typeof x.path==='string'&&x.path)found=x.path;else Object.values(x).forEach(walk)}};walk(value);return found}
 async function uploadFreeFile(dataUri){const m=String(dataUri||'').match(/^data:([^;]+);base64,(.+)$/s);if(!m)return null;const form=new FormData();form.append('files',new Blob([Buffer.from(m[2],'base64')],{type:m[1]}),'reference.'+(m[1].split('/')[1]||'bin'));const rr=await fetch(cfg.freeUrl+'/gradio_api/upload',{method:'POST',headers:cfg.freeKey?{Authorization:'Bearer '+cfg.freeKey}:{},body:form,signal:AbortSignal.timeout(60000)});const body=await rr.json().catch(()=>null);if(!rr.ok||!Array.isArray(body)||!body[0])throw Error('Free Engine تصویر مرجع را نپذیرفت.');return body[0];}
-async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage){
+async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,seed){
   const d=Math.max(5,Math.min(15,Number(duration)||5));
   const q=quality==='ultra'?'ultra':quality==='high'?'high':'fast';
   const steps=q==='ultra'?30:q==='high'?20:10;
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
-  const args=[prompt,imagePath,null,canvas,d,steps,42,Boolean(upsample)];
+  const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
+  const args=[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample)];
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
