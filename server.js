@@ -23,9 +23,10 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = Number(process.env.PORT || 10000);
-const DB = process.env.DB_FILE || path.join(__dirname, 'data', 'db.json');
-const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, 'data', 'videos');
+const PORT = Number(process.env.PORT || 3000);
+const PERSIST_ROOT = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
+const DB = process.env.DB_FILE || path.join(PERSIST_ROOT, 'db.json');
+const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(PERSIST_ROOT, 'videos');
 const cfg = {
   videoProvider: (process.env.VIDEO_PROVIDER || 'auto').trim().toLowerCase(),
   openaiKey: process.env.OPENAI_API_KEY || '',
@@ -68,25 +69,18 @@ function usage(d,u){const ds=day();const n=d.jobs.filter(j=>j.userId===u.id&&j.d
 function publicUser(d,u){return{id:u.id,email:u.email,role:u.role,wallet:Number(u.wallet||0),usage:usage(d,u)}}
 function chargeFor(u,d){const q=usage(d,u);if(q.unlimited||q.used<q.limit)return 0;return cfg.price}
 async function callJson(url,body,headers={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});let x={};try{x=await r.json()}catch{}if(!r.ok)throw Error(x?.error?.message||x?.errors?.message||x?.error||`HTTP ${r.status}`);return x}
-function normalizeVideoModel(model){const m=String(model||cfg.defaultVideoModel||'auto').trim().toLowerCase();return ['auto','veo-fast','veo-pro','sora-2','sora-2-pro','minimax-h3'].includes(m)?m:'auto'}
+function normalizeVideoModel(model){const m=String(model||cfg.defaultVideoModel||'auto').trim().toLowerCase();return ['auto','veo-fast','veo-pro','minimax-h3'].includes(m)?m:'auto'}
 function chooseVideoProvider(hasImage,model='auto',duration=6){
   const m=normalizeVideoModel(model);
   if(m==='minimax-h3')return 'free';
-  if(m==='sora-2'||m==='sora-2-pro')return cfg.openaiKey?'openai':(cfg.geminiKey?'gemini':'free');
-  if(m==='veo-fast'||m==='veo-pro')return cfg.geminiKey?'gemini':(cfg.openaiKey?'openai':'free');
-  if(cfg.videoProvider==='gemini') return cfg.geminiKey?'gemini':(cfg.openaiKey?'openai':'free');
-  if(cfg.videoProvider==='openai') return cfg.openaiKey?'openai':(cfg.geminiKey?'gemini':'free');
+  if(m==='veo-fast'||m==='veo-pro')return cfg.geminiKey?'gemini':null;
   if(cfg.videoProvider==='free') return 'free';
-  const requestedDuration=Math.max(4,Number(duration)||6);
-  if(requestedDuration>8&&cfg.openaiKey) return 'openai';
   if(cfg.geminiKey) return 'gemini';
-  if(cfg.openaiKey) return 'openai';
-  return 'free';
+  return null;
 }
 function providerDuration(provider,duration){
   const n=Math.max(4,Number(duration)||6);
-  if(provider==='gemini') return [4,6,8].reduce((a,b)=>Math.abs(b-n)<Math.abs(a-n)?b:a,8);
-  if(provider==='openai') return [4,8,12].reduce((a,b)=>Math.abs(b-n)<Math.abs(a-n)?b:a,8);
+  if(provider==='gemini') return n>8?8:n;
   return Math.min(15,n);
 }
 function dataUriToBlob(dataUri){
@@ -138,6 +132,17 @@ async function refreshOpenAISora(job){
   if(job.status==='PROCESSING') { job.pollFailures=0; job.lastPollError=null; }
   return job;
 }
+async function submitGeminiExtension(job, videoUri){
+  const rrVideo=await fetch(videoUri,{headers:{'x-goog-api-key':cfg.geminiKey},signal:AbortSignal.timeout(180000)});
+  if(!rrVideo.ok)throw Error('Gemini ویدئوی پایه برای Extension را برنگرداند.');
+  const videoBytes=Buffer.from(await rrVideo.arrayBuffer()).toString('base64');
+  const extensionPrompt=job.extensionPrompt||'Continue the scene seamlessly. Preserve the same characters, environment, camera style, lighting, wardrobe, motion and visual continuity. Continue the action naturally from the final moment.';
+  const model=job.model==='veo-pro'?'veo-3.1-generate-preview':'veo-3.1-fast-generate-preview';
+  const rr=await fetch(cfg.geminiBase+'/models/'+encodeURIComponent(model)+':predictLongRunning?key='+encodeURIComponent(cfg.geminiKey),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[{prompt:extensionPrompt,video:{inlineData:{mimeType:'video/mp4',data:videoBytes}}}],parameters:{numberOfVideos:1,resolution:'720p'}}),signal:AbortSignal.timeout(60000)});
+  const body=await rr.json().catch(()=>({}));
+  if(!rr.ok||!body.name)throw Error(body?.error?.message||'Gemini Video Extension خطا داد.');
+  return body.name;
+}
 async function refreshGeminiVeo(job){
   if(!job?.externalId) throw Error('Gemini operation شناسه ندارد.');
   const op=String(job.externalId);
@@ -153,6 +158,19 @@ async function refreshGeminiVeo(job){
       ||r.response?.generateVideoResponse?.generatedVideos?.[0]?.video
       ||r.response?.generatedVideos?.[0]?.video;
     if(!v?.uri) throw Error('Gemini عملیات تمام شد اما URI ویدئو در پاسخ وجود ندارد.');
+    if(job.requestedDuration>8 && !job.extensionSubmitted){
+      job.extensionPrompt='Continue the scene seamlessly from the final moment. Preserve the same characters, environment, historical details, camera movement, lighting, wardrobe, colors and physical motion. Do not introduce modern objects or visual discontinuities.';
+      job.stage='EXTENDING';
+      job.extensionSubmitted=true;
+      job.extensionCount=1;
+      job.externalId=await submitGeminiExtension(job,v.uri);
+      job.duration=15;
+      job.status='PROCESSING';
+      job.progress=50;
+      job.pollFailures=0;
+      job.lastPollError=null;
+      return job;
+    }
     job.providerVideoUrl=v.uri;
     job.status='SUCCEEDED';
     job.progress=100;
@@ -184,7 +202,7 @@ function sendMp4(res,buf,source){
 }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
-app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),sora2:Boolean(cfg.openaiKey),sora2Pro:Boolean(cfg.openaiKey),minimaxH3:Boolean(cfg.freeUrl)},minDuration:4,maxDuration:30,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
+app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl)},minDuration:4,maxDuration:30,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
 app.post('/api/auth/register',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!/^\S+@\S+\.\S+$/.test(email)||password.length<6)return res.status(400).json({error:'ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری لازم است.'});const d=db();if(d.users.some(u=>u.email===email))return res.status(409).json({error:'این کاربر قبلاً ثبت شده است.'});const u={id:uid(),email,passwordHash:hash(password),role:'user',wallet:0,createdAt:Date.now()};d.users.push(u);save(d);const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
 app.post('/api/auth/login',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');const d=db();let u=d.users.find(x=>x.email===email);if(!u&&email===cfg.adminEmail){u={id:'admin',email:cfg.adminEmail,passwordHash:hash(cfg.adminPassword),role:'admin',wallet:0,createdAt:Date.now()};d.users.push(u);save(d)}if(!u||!check(password,u.passwordHash))return res.status(401).json({error:'ایمیل یا رمز عبور نادرست است.'});const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
 app.get('/api/auth/me',auth,(req,res)=>res.json({user:publicUser(req.db,req.user)}));
@@ -195,7 +213,7 @@ app.delete('/api/jobs/:id',auth,(req,res)=>{const d=req.db,i=d.jobs.findIndex(x=
 app.get('/api/projects',auth,(req,res)=>res.json({projects:req.db.projects.filter(x=>x.userId===req.user.id).slice(0,100)}));
 app.post('/api/projects',auth,(req,res)=>{const name=String(req.body.name||'').trim();if(!name||name.length>120)return res.status(400).json({error:'نام پروژه نامعتبر است.'});const d=req.db,p={id:uid(),userId:req.user.id,name,createdAt:Date.now(),updatedAt:Date.now()};d.projects.unshift(p);save(d);res.json({project:p})});
 app.delete('/api/projects/:id',auth,(req,res)=>{const d=req.db,i=d.projects.findIndex(x=>x.id===req.params.id&&x.userId===req.user.id);if(i<0)return res.status(404).json({error:'پروژه پیدا نشد.'});d.projects.splice(i,1);save(d);res.json({ok:true})});
-app.get('/api/models',auth,(req,res)=>res.json({models:[{id:'auto',name:'Auto Router',provider:'router',available:Boolean(cfg.geminiKey||cfg.openaiKey||cfg.freeUrl)},{id:'veo-fast',name:'Gemini Veo 3.1 Fast',provider:'gemini',available:Boolean(cfg.geminiKey)},{id:'veo-pro',name:'Gemini Veo 3.1',provider:'gemini',available:Boolean(cfg.geminiKey)},{id:'sora-2',name:'OpenAI Sora 2',provider:'openai',available:Boolean(cfg.openaiKey)},{id:'sora-2-pro',name:'OpenAI Sora 2 Pro',provider:'openai',available:Boolean(cfg.openaiKey)},{id:'minimax-h3',name:'MiniMax H3',provider:'free',available:Boolean(cfg.freeUrl)}]}));
+app.get('/api/models',auth,(req,res)=>res.json({models:[{id:'auto',name:'Auto Router',provider:'router',available:Boolean(cfg.geminiKey)},{id:'veo-fast',name:'Gemini Veo 3.1 Fast',provider:'gemini',available:Boolean(cfg.geminiKey)},{id:'veo-pro',name:'Gemini Veo 3.1',provider:'gemini',available:Boolean(cfg.geminiKey)},{id:'minimax-h3',name:'MiniMax H3',provider:'free',available:Boolean(cfg.freeUrl)}]}));
 app.get('/api/payments',auth,(req,res)=>res.json({payments:req.db.payments.filter(x=>x.userId===req.user.id).slice(0,100)}));
 app.post('/api/payment/zarinpal/request',auth,async(req,res)=>{const amount=Math.floor(Number(req.body.amount||0));if(!Number.isFinite(amount)||amount<1000)return res.status(400).json({error:'مبلغ شارژ حداقل ۱۰۰۰ است.'});if(!cfg.zMerchant||!cfg.zCallback)return res.status(503).json({error:'زرین‌پال هنوز در تنظیمات سرور فعال نشده است.'});const d=req.db,id=uid(),p={id,userId:req.user.id,amount,currency:cfg.currency,status:'PENDING',createdAt:Date.now()};d.payments.push(p);save(d);try{const r=await callJson(`${cfg.zBase}/request.json`,{merchant_id:cfg.zMerchant,amount,callback_url:`${cfg.zCallback}${cfg.zCallback.includes('?')?'&':'?'}payment_id=${id}`,description:`شارژ کیف پول Ayaz - ${req.user.email}`,metadata:{email:req.user.email}});const authority=r?.data?.authority;if(!authority)throw Error(r?.errors?.message||'Authority دریافت نشد.');p.authority=authority;save(d);res.json({ok:true,paymentId:id,authority,url:`https://www.zarinpal.com/pg/StartPay/${authority}`})}catch(e){p.status='FAILED';p.error=e.message;save(d);res.status(502).json({error:'خطا در ایجاد پرداخت زرین‌پال: '+e.message})}});
 app.get('/api/payment/zarinpal/callback',async(req,res)=>{const id=String(req.query.payment_id||''),authority=String(req.query.Authority||''),status=String(req.query.Status||'');const d=db(),p=d.payments.find(x=>x.id===id);if(!p)return res.status(404).send('تراکنش پیدا نشد.');if(p.status==='PAID')return res.send('این تراکنش قبلاً تأیید شده است.');if(status!=='OK'){p.status='CANCELED';save(d);return res.send('پرداخت لغو شد.')}try{const r=await callJson(`${cfg.zBase}/verify.json`,{merchant_id:cfg.zMerchant,authority,amount:p.amount});const code=Number(r?.data?.code);if(code===100||code===101){p.status='PAID';p.refId=r?.data?.ref_id||null;p.verifiedAt=Date.now();const u=d.users.find(x=>x.id===p.userId);if(u)u.wallet=Number(u.wallet||0)+p.amount;save(d);return res.send('پرداخت با موفقیت تأیید شد. می‌توانید به سایت برگردید.')}p.status='FAILED';p.error=r?.errors?.message||`code ${code}`;save(d);res.status(400).send('تأیید پرداخت ناموفق بود.')}catch(e){p.status='FAILED';p.error=e.message;save(d);res.status(502).send('خطا در تأیید پرداخت: '+e.message)}});
@@ -213,18 +231,16 @@ const freePollers=new Set();
 async function pollFreeH3(job){if(freePollers.has(job.taskId))return false;freePollers.add(job.taskId);try{const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/generate/${encodeURIComponent(job.taskId)}`,{headers:cfg.freeKey?{Authorization:`Bearer ${cfg.freeKey}`}:{},signal:AbortSignal.timeout(27*60*1000)});if(!rr.ok)throw Error(`Free Engine status HTTP ${rr.status}`);if(!rr.body)throw Error('Free Engine پاسخ زنده (SSE) ندارد.');const reader=rr.body.getReader(),decoder=new TextDecoder();let buffer='',complete=null,failed=null;const consume=block=>{const normalized=block.replace(/\r/g,'');const em=normalized.match(/(?:^|\n)event:\s*([^\n]+)/),lines=normalized.split('\n').filter(x=>/^data:\s*/.test(x));if(!em||!lines.length)return;const raw=lines.map(x=>x.replace(/^data:\s*/,'')).join('').trim();let data;try{data=JSON.parse(raw)}catch{data=raw}const eventName=em[1].trim();if(eventName==='complete')complete=data;if(eventName==='error')failed=data;if(eventName==='generating'||eventName==='status'||eventName==='process_starts'){const p=extractProgress(data),s=(data&&typeof data==='object')?data:{};const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){if(p!==null){j.progress=p;j.pollFailures=0;j.lastPollError=null;}const findNum=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='number'&&Number.isFinite(v)){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const findVal=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='string'){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const eta=findNum(data,['eta']);const pos=findNum(data,['position','rank']);const qs=findNum(data,['queue_size','queueSize','size']);const stage=findVal(data,['stage','status']);if(eta!==null)j.eta=Math.max(0,Math.round(eta));if(pos!==null)j.queuePosition=pos;if(qs!==null)j.queueSize=qs;if(stage)j.stage=stage;const pd=findNum(data,['progress']);if(pd!==null)j.progress=Math.max(0,Math.min(99,Math.round((pd<=1?pd*100:pd))));activeJobs.set(j.taskId,j);save(d)}}};while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const b of blocks)consume(b);if(failed||complete)break}if(buffer)consume(buffer);if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند.');const url=findOutputUrl(complete);const outputPath=url?null:findOutputPath(complete);const finalUrl=url||(outputPath?cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath):null);if(!finalUrl)throw Error('ویدئو ساخته شد ولی لینک خروجی پیدا نشد.');const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(!j)return false;j.status='SUCCEEDED';j.url=finalUrl;j.completedAt=Date.now();j.error=undefined;activeJobs.set(j.taskId,j);save(d);return true}catch(e){const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}return false}finally{freePollers.delete(job.taskId)}}
 
 async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,promptImage,preferredProvider,model='auto',resolution='720p',seed=null){
-  const order=preferredProvider==='free'?['free']:preferredProvider==='openai'?['openai','gemini','free']:['gemini','openai','free'];
+  const order=preferredProvider==='free'?['free']:['gemini'];
   const attempts=[];
   for(const provider of order){
     if(provider==='gemini'&&!cfg.geminiKey){attempts.push('gemini: API key missing');continue}
-    if(provider==='openai'&&!cfg.openaiKey){attempts.push('openai: API key missing');continue}
     try{
       if(provider==='gemini') return {provider,submitted:await submitGeminiVeo(prompt,duration,ratio,promptImage,model==='veo-pro'?'veo-pro':'veo-fast',resolution,seed),attempts};
-      if(provider==='openai') return {provider,submitted:await submitOpenAISora(prompt,duration,ratio,promptImage,model==='sora-2-pro'?'sora-2-pro':'sora-2'),attempts};
       return {provider:'free',submitted:await submitFreeH3(prompt,duration,ratio,quality,upsample),attempts};
     }catch(e){attempts.push(provider+': '+(e?.message||String(e)));}
   }
-  throw Error('همه موتورهای تولید ویدئو ناموفق بودند: '+attempts.join(' | '));
+  throw Error('موتور واقعی Gemini Veo 3.1 در دسترس نیست. GEMINI_API_KEY را در Railway Variables تنظیم کنید. MiniMax فقط با انتخاب صریح آن فعال است.');
 }
 
 app.post('/api/generate',auth,async(req,res)=>{
@@ -232,14 +248,14 @@ app.post('/api/generate',auth,async(req,res)=>{
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
   if(prompt.length>4000||negativePrompt.length>1000)return res.status(400).json({error:'متن پرامپت بیش از حد مجاز است.'});
   if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
-  if((model==='sora-2'||model==='sora-2-pro')&&(req.body.ratio||'1280:720')==='960:960')return res.status(400).json({error:'Sora نسبت 1:1 را پشتیبانی نمی‌کند؛ 16:9 یا 9:16 را انتخاب کنید.'});
-  if(duration<4||duration>30)return res.status(400).json({error:'مدت باید بین ۴ تا ۳۰ ثانیه باشد.'});
+    if(duration<4||duration>30)return res.status(400).json({error:'مدت باید بین ۴ تا ۳۰ ثانیه باشد.'});
   const projectId=String(req.body.projectId||'').trim();
   if(projectId&&!d.projects.some(x=>x.id===projectId&&x.userId===u.id))return res.status(404).json({error:'پروژه پیدا نشد.'});
   const cost=chargeFor(u,d);
   if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
   try{
     const preferredProvider=chooseVideoProvider(hasImage,model,duration);
+    if(!preferredProvider)return res.status(503).json({error:'هیچ موتور واقعی AI فعال نیست. GEMINI_API_KEY را در Railway Variables تنظیم کنید.'});
     const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
     const result=await submitVideoWithFallback(effectivePrompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed);
     const submitted=result.submitted;
