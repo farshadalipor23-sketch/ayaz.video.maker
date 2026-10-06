@@ -422,7 +422,7 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
     if(j.provider==='free'){
       const uri=j.url;
       if(!uri)return res.status(404).send('لینک ویدئوی MiniMax-H3 پیدا نشد.');
-      const rr=await fetch(uri,{headers:{...(cfg.hfToken?{Authorization:`Bearer ${cfg.hfToken}`}:{}),...(cfg.freeKey?{Authorization:`Bearer ${cfg.freeKey}`}:{})},signal:AbortSignal.timeout(180000)});
+      const rr=await fetch(uri,{headers:{...((cfg.hfToken||cfg.freeKey)?{Authorization:`Bearer ${cfg.hfToken||cfg.freeKey}`}:{})},signal:AbortSignal.timeout(180000)});
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
       return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'minimax-h3');
     }
