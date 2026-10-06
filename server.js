@@ -312,7 +312,7 @@ async function runH3SelfTest(){
   if(String(process.env.SELF_TEST_H3||'').toLowerCase()!=='true')return;
   const taskId='self-test-'+uid();
   try{
-    const submitted=await submitFreeH3('A realistic cinematic city skyline at golden hour, natural camera movement, professional lighting.',5,'1280:720','fast',true,null,42,null);
+    const submitted=await submitFreeH3('A realistic cinematic city skyline at golden hour, natural camera movement, professional lighting.',5,'1280:720','fast',true,null,42,cfg.hfToken);
     const d=db(),job={id:uid(),taskId,userId:'self-test',day:day(),engine:'free',provider:'free',model:'minimax-h3-turbo',status:'PROCESSING',stage:'QUEUED',progress:2,createdAt:Date.now(),cost:0,duration:5,requestedDuration:5,ratio:'1280:720',resolution:'720p',externalId:submitted.eventId,quality:submitted.quality,steps:submitted.steps};
     d.jobs.unshift(job);save(d);
     await pollFreeH3(job);
