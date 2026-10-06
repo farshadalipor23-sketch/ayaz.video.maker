@@ -238,7 +238,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage){
   const steps=q==='ultra'?30:q==='high'?20:10;
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
-  const args=[prompt,imagePath,null,canvas,d,steps,42];
+  const args=[prompt,imagePath,null,canvas,d,steps,42,Boolean(upsample)];
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
