@@ -267,13 +267,23 @@ app.get('/api/tasks/:id',auth,async(req,res)=>{
       u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true;
     }
     if(j.provider!=='free') { activeJobs.set(j.taskId,j); save(d); }
-  }catch(e){j.error=e.message||String(e);activeJobs.set(j.taskId,j);save(d)}
+  }catch(e){
+    j.lastPollError=e.message||String(e);
+    j.pollFailures=(j.pollFailures||0)+1;
+    if(j.pollFailures>=6 && j.status==='PROCESSING'){
+      j.status='FAILED';
+      j.error=j.lastPollError;
+      if(j.cost){u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}
+      j.finishedAt=Date.now();
+    }
+    activeJobs.set(j.taskId,j);save(d)
+  }
   const fresh=j.provider==='free'?db().jobs.find(x=>x.taskId===taskId&&x.userId===u.id):j;
   const out=fresh||j;
   const url=out.status==='SUCCEEDED'&&out.provider==='openai'?'/api/tasks/'+encodeURIComponent(out.taskId)+'/video?token='+encodeURIComponent(req.token):
     out.status==='SUCCEEDED'&&out.provider==='gemini'?'/api/tasks/'+encodeURIComponent(out.taskId)+'/video?token='+encodeURIComponent(req.token):
     out.url||null;
-  res.json({status:out.status,url,error:out.error,engine:out.engine,provider:out.provider,quality:out.quality,steps:out.steps,progress:typeof out.progress==='number'?out.progress:null,stage:out.stage||null,eta:typeof out.eta==='number'?out.eta:null,queuePosition:typeof out.queuePosition==='number'?out.queuePosition:null,queueSize:typeof out.queueSize==='number'?out.queueSize:null});
+  res.json({status:out.status,url,error:out.error,lastPollError:out.lastPollError||null,pollFailures:out.pollFailures||0,engine:out.engine,provider:out.provider,quality:out.quality,steps:out.steps,progress:typeof out.progress==='number'?out.progress:null,stage:out.stage||null,eta:typeof out.eta==='number'?out.eta:null,queuePosition:typeof out.queuePosition==='number'?out.queuePosition:null,queueSize:typeof out.queueSize==='number'?out.queueSize:null});
 });
 
 async function processJob(job){
@@ -291,7 +301,16 @@ async function processJob(job){
     }
   }catch(e){
     const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);
-    if(j){j.lastPollError=e.message||String(e);j.pollFailures=(j.pollFailures||0)+1;j.lastPolledAt=Date.now();activeJobs.set(j.taskId,j);save(d)}
+    if(j){
+      j.lastPollError=e.message||String(e);
+      j.pollFailures=(j.pollFailures||0)+1;
+      j.lastPolledAt=Date.now();
+      if(j.pollFailures>=6&&j.status==='PROCESSING'){
+        j.status='FAILED';j.error=j.lastPollError;j.finishedAt=Date.now();
+        if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}
+      }
+      activeJobs.set(j.taskId,j);save(d)
+    }
   }
 }
 async function processAllJobs(){
