@@ -25,6 +25,7 @@ app.use((req, res, next) => {
 
 const PORT = Number(process.env.PORT || 10000);
 const DB = process.env.DB_FILE || path.join(__dirname, 'data', 'db.json');
+const VIDEO_DIR = process.env.VIDEO_STORAGE_DIR || path.join(__dirname, 'data', 'videos');
 const cfg = {
   videoProvider: (process.env.VIDEO_PROVIDER || 'auto').trim().toLowerCase(),
   openaiKey: process.env.OPENAI_API_KEY || '',
@@ -51,7 +52,7 @@ function getIndexFilePath() {
   for (const p of [path.join(__dirname,'index.html'), path.join(__dirname,'public','index.html'), path.join(process.cwd(),'index.html'), path.join(process.cwd(),'public','index.html')]) if (fs.existsSync(p)) return p;
   return null;
 }
-function ensure(){ fs.mkdirSync(path.dirname(DB),{recursive:true}); if(!fs.existsSync(DB)) fs.writeFileSync(DB,JSON.stringify({users:[],payments:[],jobs:[],projects:[],settings:{bankName:'',accountHolder:'',cardNumber:'',iban:'',bankNote:''}},null,2)); }
+function ensure(){ fs.mkdirSync(path.dirname(DB),{recursive:true}); fs.mkdirSync(VIDEO_DIR,{recursive:true}); if(!fs.existsSync(DB)) fs.writeFileSync(DB,JSON.stringify({users:[],payments:[],jobs:[],projects:[],settings:{bankName:'',accountHolder:'',cardNumber:'',iban:'',bankNote:''}},null,2)); }
 function db(){ ensure(); let d; try{d=JSON.parse(fs.readFileSync(DB,'utf8'))}catch{d={users:[],payments:[],jobs:[],settings:{}}} d.users??=[];d.payments??=[];d.jobs??=[];d.projects??=[];d.settings??={};return d; }
 function save(d){ fs.writeFileSync(DB,JSON.stringify(d,null,2)); }
 function hash(p,s=crypto.randomBytes(16).toString('hex')){return `${s}:${crypto.scryptSync(p,s,64).toString('hex')}`;}
@@ -151,6 +152,7 @@ function isMp4Buffer(buf){
   const p=buf.subarray(0,64).toString('latin1');
   return p.includes('ftyp');
 }
+async function cacheMp4(job,buf){const file=path.join(VIDEO_DIR,job.taskId+'.mp4');await fs.promises.writeFile(file,buf);job.localOutputPath=file;job.outputBytes=buf.length;job.completedAt=Date.now();return file}
 function sendMp4(res,buf,source){
   if(!isMp4Buffer(buf)) throw Error('Provider خروجی معتبر MP4 برنگرداند.');
   res.setHeader('Content-Type','video/mp4');
@@ -226,7 +228,7 @@ app.post('/api/generate',auth,async(req,res)=>{
       return res.json({taskId:job.taskId,model:'OpenAI Sora 2',duration:job.duration,engine:'openai',provider:'openai',fallbackAttempts:result.attempts});
     }
     if(result.provider==='gemini'){
-      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'gemini',provider:'gemini',model:model==='auto'?'veo-fast':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',fallbackAttempts:result.attempts};
+      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'gemini',provider:'gemini',model:model==='auto'?'veo-fast':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,fallbackAttempts:result.attempts};
       d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
       return res.json({taskId:job.taskId,model:'Gemini Veo 3.1 Fast',duration:job.duration,engine:'gemini',provider:'gemini',fallbackAttempts:result.attempts});
     }
@@ -257,6 +259,32 @@ app.get('/api/tasks/:id',auth,async(req,res)=>{
     out.url||null;
   res.json({status:out.status,url,error:out.error,engine:out.engine,provider:out.provider,quality:out.quality,steps:out.steps,progress:typeof out.progress==='number'?out.progress:null,stage:out.stage||null,eta:typeof out.eta==='number'?out.eta:null,queuePosition:typeof out.queuePosition==='number'?out.queuePosition:null,queueSize:typeof out.queueSize==='number'?out.queueSize:null});
 });
+
+async function processJob(job){
+  if(!job||job.status!=='PROCESSING')return;
+  try{
+    if(job.provider==='openai')await refreshOpenAISora(job);
+    else if(job.provider==='gemini')await refreshGeminiVeo(job);
+    else if(job.provider==='free')await pollFreeH3(job);
+    const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);
+    if(j){
+      if(j.status==='SUCCEEDED'||j.status==='FAILED')j.finishedAt=j.finishedAt||Date.now();
+      j.lastPolledAt=Date.now();
+      activeJobs.set(j.taskId,j);save(d);
+      if(j.status==='FAILED'&&j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true;save(d)}
+    }
+  }catch(e){
+    const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);
+    if(j){j.lastPollError=e.message||String(e);j.pollFailures=(j.pollFailures||0)+1;j.lastPolledAt=Date.now();activeJobs.set(j.taskId,j);save(d)}
+  }
+}
+async function processAllJobs(){
+  const d=db();
+  for(const j of d.jobs.filter(x=>x.status==='PROCESSING').slice(0,20))await processJob(j);
+}
+setInterval(()=>{processAllJobs().catch(()=>{})},5000);
+setTimeout(()=>{processAllJobs().catch(()=>{})},1500);
+
 app.get('/api/tasks/:id/video',async(req,res)=>{
   const t=String(req.query.token||'').replace(/^Bearer\s+/i,'');
   const s=sessions.get(t);if(!s)return res.status(401).send('نیاز به ورود دارید.');
