@@ -315,7 +315,7 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
     }
     if(j.provider==='gemini'){
       const uri=j.providerVideoUrl;if(!uri)return res.status(404).send('لینک ویدئو پیدا نشد.');
-      const rr=await fetch(uri+(uri.includes('?')?'&':'?')+'key='+encodeURIComponent(cfg.geminiKey),{signal:AbortSignal.timeout(180000)});
+      const rr=await fetch(uri,{headers:{'x-goog-api-key':cfg.geminiKey},signal:AbortSignal.timeout(180000)});
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
       return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'gemini');
     }
