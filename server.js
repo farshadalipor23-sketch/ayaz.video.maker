@@ -169,7 +169,8 @@ app.post('/api/auth/login',(req,res)=>{const email=String(req.body.email||'').tr
 app.get('/api/auth/me',auth,(req,res)=>res.json({user:publicUser(req.db,req.user)}));
 app.post('/api/auth/logout',auth,(req,res)=>{sessions.delete(req.token);res.json({ok:true})});
 app.get('/api/wallet',auth,(req,res)=>res.json({wallet:Number(req.user.wallet||0),usage:usage(req.db,req.user),pricePerVideo:cfg.price,currency:cfg.currency,bank:safePublicSettings(req.db)}));
-app.get('/api/jobs',auth,(req,res)=>res.json({jobs:req.db.jobs.filter(x=>x.userId===req.user.id).slice(0,100)}));
+app.get('/api/jobs',auth,(req,res)=>{const jobs=req.db.jobs.filter(x=>x.userId===req.user.id).slice(0,100).map(j=>({...j,url:j.status==='SUCCEEDED'?'/api/tasks/'+encodeURIComponent(j.taskId)+'/video?token='+encodeURIComponent(req.token):null,externalId:undefined,providerVideoUrl:undefined,localOutputPath:undefined}));res.json({jobs})});
+app.delete('/api/jobs/:id',auth,(req,res)=>{const d=req.db,i=d.jobs.findIndex(x=>x.taskId===req.params.id&&x.userId===req.user.id);if(i<0)return res.status(404).json({error:'Job پیدا نشد.'});const j=d.jobs[i];if(j.status==='PROCESSING')return res.status(409).json({error:'Job در حال پردازش است و حذف نشد.'});if(j.localOutputPath)fs.promises.unlink(j.localOutputPath).catch(()=>{});d.jobs.splice(i,1);activeJobs.delete(j.taskId);save(d);res.json({ok:true})});
 app.get('/api/projects',auth,(req,res)=>res.json({projects:req.db.projects.filter(x=>x.userId===req.user.id).slice(0,100)}));
 app.post('/api/projects',auth,(req,res)=>{const name=String(req.body.name||'').trim();if(!name||name.length>120)return res.status(400).json({error:'نام پروژه نامعتبر است.'});const d=req.db,p={id:uid(),userId:req.user.id,name,createdAt:Date.now(),updatedAt:Date.now()};d.projects.unshift(p);save(d);res.json({project:p})});
 app.delete('/api/projects/:id',auth,(req,res)=>{const d=req.db,i=d.projects.findIndex(x=>x.id===req.params.id&&x.userId===req.user.id);if(i<0)return res.status(404).json({error:'پروژه پیدا نشد.'});d.projects.splice(i,1);save(d);res.json({ok:true})});
@@ -237,6 +238,7 @@ app.post('/api/generate',auth,async(req,res)=>{
     return res.json({taskId:job.taskId,model:'MiniMax-H3 Free Engine',duration:job.duration,engine:'free',provider:'free',quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts});
   }catch(e){res.status(502).json({error:e.message||'خطا در موتور تولید'})}
 });
+app.post('/api/tasks/:id/cancel',auth,(req,res)=>{const d=req.db,j=d.jobs.find(x=>x.taskId===req.params.id&&x.userId===req.user.id);if(!j)return res.status(404).json({error:'Job پیدا نشد.'});if(j.status!=='PROCESSING')return res.json({status:j.status});j.status='CANCELED';j.canceledAt=Date.now();if(j.cost){req.user.wallet=Number(req.user.wallet||0)+j.cost;j.cost=0;j.refunded=true}save(d);activeJobs.delete(j.taskId);res.json({status:j.status})});
 app.get('/api/tasks/:id',auth,async(req,res)=>{
   const taskId=req.params.id;
   const cached=activeJobs.get(taskId);
@@ -280,7 +282,8 @@ async function processJob(job){
 }
 async function processAllJobs(){
   const d=db();
-  for(const j of d.jobs.filter(x=>x.status==='PROCESSING').slice(0,20))await processJob(j);
+  const jobs=d.jobs.filter(x=>x.status==='PROCESSING').slice(0,20);
+  await Promise.allSettled(jobs.map(processJob));
 }
 setInterval(()=>{processAllJobs().catch(()=>{})},5000);
 setTimeout(()=>{processAllJobs().catch(()=>{})},1500);
