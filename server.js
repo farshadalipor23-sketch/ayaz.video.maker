@@ -138,7 +138,7 @@ async function refreshOpenAISora(job){
 async function refreshGeminiVeo(job){
   if(!job?.externalId) throw Error('Gemini operation شناسه ندارد.');
   const op=String(job.externalId);
-  const opPath=op.replace(/^https?:\\/\\/[^/]+\\//,'').replace(/^\\/+/, '');
+  const opPath=op.replace(/^https?:\/\/[^/]+\//,'').replace(/^\/+/, '');
   const url=opPath.startsWith('v1beta/') ? cfg.geminiBase+'/'+opPath.slice(7) : cfg.geminiBase+'/'+opPath;
   const rr=await fetch(url,{headers:{'x-goog-api-key':cfg.geminiKey},signal:AbortSignal.timeout(30000)});
   const raw=await rr.text();
