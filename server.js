@@ -305,34 +305,40 @@ app.post('/api/generate',auth,async(req,res)=>{
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
   if(prompt.length>4000||negativePrompt.length>1000)return res.status(400).json({error:'متن پرامپت بیش از حد مجاز است.'});
   if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
-    if(duration<5||duration>15)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۵ ثانیه باشد.'});
+  if(duration<5||duration>15)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۵ ثانیه باشد.'});
   const projectId=String(req.body.projectId||'').trim();
   if(projectId&&!d.projects.some(x=>x.id===projectId&&x.userId===u.id))return res.status(404).json({error:'پروژه پیدا نشد.'});
   const cost=chargeFor(u,d);
   if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
-  try{
-    const preferredProvider=chooseVideoProvider(hasImage,model,duration);
-    if(!preferredProvider)return res.status(503).json({error:'هیچ موتور واقعی AI فعال نیست. Free MiniMax-H3 را فعال کنید.'});
-    // MiniMax-H3 Turbo LoRA is a public ZeroGPU Space; HF_TOKEN is optional. When present, it is used, otherwise the request uses the Space's anonymous/IP quota.
-    const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
-    const ipToken=String(req.headers['x-ip-token']||'').trim()||null;
-    const result=await submitVideoWithFallback(effectivePrompt,duration,req.body.ratio||'1280:720',req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed,ipToken);
-    const submitted=result.submitted;
-    let job;
-    if(result.provider==='openai'){
-      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'openai',provider:'openai',model:model==='auto'?'sora-2':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,fallbackAttempts:result.attempts};
-      d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
-      return res.json({taskId:job.taskId,model:job.model,duration:job.duration,requestedDuration:job.requestedDuration,engine:'openai',provider:'openai',fallbackAttempts:result.attempts});
+  const preferredProvider=chooseVideoProvider(hasImage,model,duration);
+  if(!preferredProvider)return res.status(503).json({error:'هیچ موتور واقعی AI فعال نیست. Free MiniMax-H3 را فعال کنید.'});
+  const taskId=uid(),ipToken=String(req.headers['x-ip-token']||'').trim()||null;
+  const job={id:uid(),taskId,userId:u.id,day:day(),engine:preferredProvider,provider:preferredProvider,model:preferredProvider==='free'?'minimax-h3-turbo':(model==='auto'?'veo-fast':model),status:'PROCESSING',stage:'SUBMITTING',progress:1,createdAt:Date.now(),cost,duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,ipToken:ipToken||undefined,fallbackAttempts:[]};
+  d.jobs.unshift(job);activeJobs.set(taskId,job);if(cost)u.wallet-=cost;save(d);
+  res.status(202).json({taskId,model:job.model,duration,requestedDuration:duration,engine:preferredProvider,provider:preferredProvider,queued:true});
+  (async()=>{
+    try{
+      const effectivePrompt=negativePrompt?prompt+'\n\nAvoid: '+negativePrompt:prompt;
+      const result=await submitVideoWithFallback(effectivePrompt,duration,job.ratio,req.body.quality||'high',req.body.upsample!==false,promptImage,preferredProvider,model,resolution,seed,ipToken);
+      const submitted=result.submitted;
+      const d2=db(),j=d2.jobs.find(x=>x.taskId===taskId);
+      if(!j)return;
+      j.fallbackAttempts=result.attempts;
+      if(result.provider==='free'){
+        j.engine='free';j.provider='free';j.model='minimax-h3-turbo';j.taskId=submitted.eventId;j.stage='QUEUED';j.progress=2;j.quality=submitted.quality;j.steps=submitted.steps;j.ipToken=ipToken||undefined;
+        activeJobs.delete(taskId);activeJobs.set(j.taskId,j);save(d2);pollFreeH3(j).catch(()=>{});
+      }else if(result.provider==='gemini'){
+        j.engine='gemini';j.provider='gemini';j.model=model==='auto'?'veo-fast':model;j.externalId=submitted.externalId;j.stage='PROCESSING';j.progress=2;
+        activeJobs.set(j.taskId,j);save(d2);
+      }else{
+        j.engine='openai';j.provider='openai';j.model=model;j.externalId=submitted.externalId;j.stage='PROCESSING';j.progress=2;
+        activeJobs.set(j.taskId,j);save(d2);
+      }
+    }catch(e){
+      const d2=db(),j=d2.jobs.find(x=>x.taskId===taskId);
+      if(j){j.status='FAILED';j.stage='ERROR';j.error=e?.message||String(e);j.finishedAt=Date.now();if(j.cost){const uu=d2.users.find(x=>x.id===j.userId);if(uu)uu.wallet=Number(uu.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(taskId,j);save(d2)}
     }
-    if(result.provider==='gemini'){
-      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'gemini',provider:'gemini',model:model==='auto'?'veo-fast':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,fallbackAttempts:result.attempts};
-      d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
-      return res.json({taskId:job.taskId,model:job.model,duration:job.duration,requestedDuration:job.requestedDuration,engine:'gemini',provider:'gemini',fallbackAttempts:result.attempts});
-    }
-    job={id:uid(),taskId:submitted.eventId,userId:u.id,day:day(),engine:'free',provider:'free',model:'minimax-h3-turbo',ipToken:ipToken||undefined,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts};
-    d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);pollFreeH3(job).catch(()=>{});
-    return res.json({taskId:job.taskId,model:'MiniMax-H3 Turbo LoRA',duration:job.duration,engine:'free',provider:'free',quality:submitted.quality,steps:submitted.steps,fallbackAttempts:result.attempts});
-  }catch(e){res.status(502).json({error:e.message||'خطا در موتور تولید'})}
+  })();
 });
 app.post('/api/tasks/:id/cancel',auth,(req,res)=>{const d=req.db,j=d.jobs.find(x=>x.taskId===req.params.id&&x.userId===req.user.id);if(!j)return res.status(404).json({error:'Job پیدا نشد.'});if(j.status!=='PROCESSING')return res.json({status:j.status});j.status='CANCELED';j.canceledAt=Date.now();if(j.cost){req.user.wallet=Number(req.user.wallet||0)+j.cost;j.cost=0;j.refunded=true}save(d);activeJobs.delete(j.taskId);res.json({status:j.status})});
 app.get('/api/tasks/:id',auth,async(req,res)=>{
