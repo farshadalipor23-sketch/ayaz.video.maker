@@ -300,18 +300,6 @@ async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,pr
   throw Error(detail.replace(/^free:\s*/i,''));
 }
 
-if(process.env.SELF_TEST_H3==='1'){
-  app.get('/api/self-test-h3',async(req,res)=>{
-    try{
-      const existing=req.query.id?db().jobs.find(x=>x.id===String(req.query.id)):null;
-      if(existing)return res.json({id:existing.id,status:existing.status,progress:existing.progress||0,url:existing.url||null,error:existing.error||null});
-      const jobId='selftest-'+Date.now().toString(36);
-      const submitted=await submitFreeH3('A simple cinematic test shot of a red apple on a wooden table, natural daylight, realistic motion',5,'720:1280','fast',false,null,42,null);
-      const job={id:jobId,taskId:submitted.eventId,userId:'selftest',day:today(),engine:'free',provider:'free',model:'minimax-h3-turbo',ipToken:null,status:'PROCESSING',createdAt:Date.now(),cost:0,duration:5,quality:'fast',steps:submitted.steps,fallbackAttempts:[]};
-      const d=db();d.jobs.push(job);save(d);pollFreeH3(job).catch(()=>{});return res.json({id:jobId,status:job.status,taskId:job.taskId});
-    }catch(e){return res.status(502).json({error:e.message||String(e)})}
-  });
-}
 app.post('/api/generate',auth,async(req,res)=>{
   const d=req.db,u=req.user,prompt=String(req.body.prompt||'').trim(),negativePrompt=String(req.body.negativePrompt||'').trim(),promptImage=req.body.promptImage||null,hasImage=Boolean(promptImage),duration=Number(req.body.duration||5),model=normalizeVideoModel(req.body.model),resolution=['720p','1080p','4k'].includes(req.body.resolution)?req.body.resolution:'720p',seed=req.body.seed===''||req.body.seed==null?null:Number(req.body.seed);
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
