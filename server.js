@@ -51,8 +51,8 @@ function getIndexFilePath() {
   for (const p of [path.join(__dirname,'index.html'), path.join(__dirname,'public','index.html'), path.join(process.cwd(),'index.html'), path.join(process.cwd(),'public','index.html')]) if (fs.existsSync(p)) return p;
   return null;
 }
-function ensure(){ fs.mkdirSync(path.dirname(DB),{recursive:true}); if(!fs.existsSync(DB)) fs.writeFileSync(DB,JSON.stringify({users:[],payments:[],jobs:[],settings:{bankName:'',accountHolder:'',cardNumber:'',iban:'',bankNote:''}},null,2)); }
-function db(){ ensure(); let d; try{d=JSON.parse(fs.readFileSync(DB,'utf8'))}catch{d={users:[],payments:[],jobs:[],settings:{}}} d.users??=[];d.payments??=[];d.jobs??=[];d.settings??={};return d; }
+function ensure(){ fs.mkdirSync(path.dirname(DB),{recursive:true}); if(!fs.existsSync(DB)) fs.writeFileSync(DB,JSON.stringify({users:[],payments:[],jobs:[],projects:[],settings:{bankName:'',accountHolder:'',cardNumber:'',iban:'',bankNote:''}},null,2)); }
+function db(){ ensure(); let d; try{d=JSON.parse(fs.readFileSync(DB,'utf8'))}catch{d={users:[],payments:[],jobs:[],settings:{}}} d.users??=[];d.payments??=[];d.jobs??=[];d.projects??=[];d.settings??={};return d; }
 function save(d){ fs.writeFileSync(DB,JSON.stringify(d,null,2)); }
 function hash(p,s=crypto.randomBytes(16).toString('hex')){return `${s}:${crypto.scryptSync(p,s,64).toString('hex')}`;}
 function check(p,h){try{const [s,x]=String(h).split(':');if(!s||!x)return false;const a=Buffer.from(x,'hex'),b=crypto.scryptSync(p,s,64);return a.length===b.length&&crypto.timingSafeEqual(a,b)}catch{return false}}
@@ -168,6 +168,9 @@ app.get('/api/auth/me',auth,(req,res)=>res.json({user:publicUser(req.db,req.user
 app.post('/api/auth/logout',auth,(req,res)=>{sessions.delete(req.token);res.json({ok:true})});
 app.get('/api/wallet',auth,(req,res)=>res.json({wallet:Number(req.user.wallet||0),usage:usage(req.db,req.user),pricePerVideo:cfg.price,currency:cfg.currency,bank:safePublicSettings(req.db)}));
 app.get('/api/jobs',auth,(req,res)=>res.json({jobs:req.db.jobs.filter(x=>x.userId===req.user.id).slice(0,100)}));
+app.get('/api/projects',auth,(req,res)=>res.json({projects:req.db.projects.filter(x=>x.userId===req.user.id).slice(0,100)}));
+app.post('/api/projects',auth,(req,res)=>{const name=String(req.body.name||'').trim();if(!name||name.length>120)return res.status(400).json({error:'نام پروژه نامعتبر است.'});const d=req.db,p={id:uid(),userId:req.user.id,name,createdAt:Date.now(),updatedAt:Date.now()};d.projects.unshift(p);save(d);res.json({project:p})});
+app.delete('/api/projects/:id',auth,(req,res)=>{const d=req.db,i=d.projects.findIndex(x=>x.id===req.params.id&&x.userId===req.user.id);if(i<0)return res.status(404).json({error:'پروژه پیدا نشد.'});d.projects.splice(i,1);save(d);res.json({ok:true})});
 app.get('/api/models',auth,(req,res)=>res.json({models:[{id:'auto',name:'Auto Router',provider:'router',available:Boolean(cfg.geminiKey||cfg.openaiKey||cfg.freeUrl)},{id:'veo-fast',name:'Gemini Veo 3.1 Fast',provider:'gemini',available:Boolean(cfg.geminiKey)},{id:'veo-pro',name:'Gemini Veo 3.1',provider:'gemini',available:Boolean(cfg.geminiKey)},{id:'sora-2',name:'OpenAI Sora 2',provider:'openai',available:Boolean(cfg.openaiKey)},{id:'sora-2-pro',name:'OpenAI Sora 2 Pro',provider:'openai',available:Boolean(cfg.openaiKey)},{id:'minimax-h3',name:'MiniMax H3',provider:'free',available:Boolean(cfg.freeUrl)}]}));
 app.get('/api/payments',auth,(req,res)=>res.json({payments:req.db.payments.filter(x=>x.userId===req.user.id).slice(0,100)}));
 app.post('/api/payment/zarinpal/request',auth,async(req,res)=>{const amount=Math.floor(Number(req.body.amount||0));if(!Number.isFinite(amount)||amount<1000)return res.status(400).json({error:'مبلغ شارژ حداقل ۱۰۰۰ است.'});if(!cfg.zMerchant||!cfg.zCallback)return res.status(503).json({error:'زرین‌پال هنوز در تنظیمات سرور فعال نشده است.'});const d=req.db,id=uid(),p={id,userId:req.user.id,amount,currency:cfg.currency,status:'PENDING',createdAt:Date.now()};d.payments.push(p);save(d);try{const r=await callJson(`${cfg.zBase}/request.json`,{merchant_id:cfg.zMerchant,amount,callback_url:`${cfg.zCallback}${cfg.zCallback.includes('?')?'&':'?'}payment_id=${id}`,description:`شارژ کیف پول Ayaz - ${req.user.email}`,metadata:{email:req.user.email}});const authority=r?.data?.authority;if(!authority)throw Error(r?.errors?.message||'Authority دریافت نشد.');p.authority=authority;save(d);res.json({ok:true,paymentId:id,authority,url:`https://www.zarinpal.com/pg/StartPay/${authority}`})}catch(e){p.status='FAILED';p.error=e.message;save(d);res.status(502).json({error:'خطا در ایجاد پرداخت زرین‌پال: '+e.message})}});
@@ -207,6 +210,8 @@ app.post('/api/generate',auth,async(req,res)=>{
   if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
   if((model==='sora-2'||model==='sora-2-pro')&&(req.body.ratio||'1280:720')==='960:960')return res.status(400).json({error:'Sora نسبت 1:1 را پشتیبانی نمی‌کند؛ 16:9 یا 9:16 را انتخاب کنید.'});
   if(duration<4||duration>30)return res.status(400).json({error:'مدت باید بین ۴ تا ۳۰ ثانیه باشد.'});
+  const projectId=String(req.body.projectId||'').trim();
+  if(projectId&&!d.projects.some(x=>x.id===projectId&&x.userId===u.id))return res.status(404).json({error:'پروژه پیدا نشد.'});
   const cost=chargeFor(u,d);
   if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
   try{
@@ -216,7 +221,7 @@ app.post('/api/generate',auth,async(req,res)=>{
     const submitted=result.submitted;
     let job;
     if(result.provider==='openai'){
-      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'openai',provider:'openai',model:model==='auto'?'sora-2':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,fallbackAttempts:result.attempts};
+      job={id:uid(),taskId:uid(),externalId:submitted.externalId,userId:u.id,day:day(),engine:'openai',provider:'openai',model:model==='auto'?'sora-2':model,status:'PROCESSING',createdAt:Date.now(),cost,duration:submitted.duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution,negativePrompt,seed,projectId,fallbackAttempts:result.attempts};
       d.jobs.unshift(job);activeJobs.set(job.taskId,job);if(cost)u.wallet-=cost;save(d);
       return res.json({taskId:job.taskId,model:'OpenAI Sora 2',duration:job.duration,engine:'openai',provider:'openai',fallbackAttempts:result.attempts});
     }
