@@ -69,7 +69,7 @@ const cfg = {
   runwayBase: (process.env.RUNWAY_API_BASE || 'https://api.dev.runwayml.com/v1').replace(/\/$/, ''),
   freeUrl: (process.env.FREE_ENGINE_URL || 'https://minimaxai-minimax-h3-turbo-lora.hf.space').replace(/\/$/, ''),
   freeKey: process.env.FREE_ENGINE_API_KEY || '',
-  hfToken: process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || '',
+  hfToken: String(process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || '').trim(),
   zMerchant: process.env.ZARINPAL_MERCHANT_ID || '',
   zCallback: process.env.ZARINPAL_CALLBACK_URL || '',
   zBase: (process.env.ZARINPAL_API_BASE || 'https://api.zarinpal.com/pg/v4/payment').replace(/\/$/, ''),
@@ -234,10 +234,11 @@ function sendMp4(res,buf,source){
   res.setHeader('Cache-Control','private, max-age=300');
   return res.send(buf);
 }
+function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Authorization:`Bearer ${token}`,...extra} : {...extra}; }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
 app.get('/api/ready',(req,res)=>{const freeReady=Boolean(cfg.freeUrl);const hfConfigured=Boolean(cfg.hfToken||cfg.freeKey);res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker',freeEngineConfigured:freeReady,hfTokenConfigured:hfConfigured,videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel});});
-app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),hfTokenConfigured:Boolean(cfg.hfToken),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl),minimaxH3Turbo:Boolean(cfg.freeUrl)},minDuration:4,maxDuration:30,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
+app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),hfTokenConfigured:Boolean(cfg.hfToken),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl),minimaxH3Turbo:Boolean(cfg.freeUrl)},minDuration:5,maxDuration:15,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
 app.post('/api/auth/register',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!/^\S+@\S+\.\S+$/.test(email)||password.length<6)return res.status(400).json({error:'ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری لازم است.'});const d=db();if(d.users.some(u=>u.email===email))return res.status(409).json({error:'این کاربر قبلاً ثبت شده است.'});const u={id:uid(),email,passwordHash:hash(password),role:'user',wallet:0,createdAt:Date.now()};d.users.push(u);save(d);const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
 app.post('/api/auth/login',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');const d=db();let u=d.users.find(x=>x.email===email);if(!u&&email===cfg.adminEmail&&cfg.adminPassword!=='CHANGE_THIS_STRONG_PASSWORD'){u={id:'admin',email:cfg.adminEmail,passwordHash:hash(cfg.adminPassword),role:'admin',wallet:0,createdAt:Date.now()};d.users.push(u);save(d)}if(!u||!check(password,u.passwordHash))return res.status(401).json({error:'ایمیل یا رمز عبور نادرست است.'});const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
 app.get('/api/auth/me',auth,(req,res)=>res.json({user:publicUser(req.db,req.user)}));
@@ -257,11 +258,11 @@ app.post('/api/admin/users/:id/credit',auth,admin,(req,res)=>{const d=req.db,u=d
 app.post('/api/admin/users/:id/role',auth,admin,(req,res)=>{const d=req.db,u=d.users.find(x=>x.id===req.params.id);if(!u)return res.status(404).json({error:'کاربر یافت نشد.'});if(u.id===req.user.id&&req.body.role!=='admin')return res.status(400).json({error:'حساب Admin فعلی را نمی‌توان به کاربر عادی تبدیل کرد.'});u.role=req.body.role==='admin'?'admin':'user';save(d);res.json({ok:true,user:publicUser(d,u)})});
 app.post('/api/admin/settings/bank',auth,admin,(req,res)=>{const d=req.db;d.settings={...d.settings,bankName:String(req.body.bankName||'').trim(),accountHolder:String(req.body.accountHolder||'').trim(),cardNumber:String(req.body.cardNumber||'').trim(),iban:String(req.body.iban||'').trim(),bankNote:String(req.body.bankNote||'').trim()};save(d);res.json({ok:true,bank:safePublicSettings(d)})});
 
-function canvasFor(ratio,quality){const full=quality==='ultra';if(ratio==='720:1280')return full?'768x1344 · 9:16 full':'544x960 · 9:16 fast';if(ratio==='960:960')return full?'768x768 · 1:1 full':'768x768 · 1:1 full';return full?'1344x768 · 16:9 full':quality==='high'?'1024x576 · 16:9 fast':'960x544 · 16:9 fast'}
+function canvasFor(ratio,quality){if(ratio==='720:1280')return '544x960 · 9:16';if(ratio==='960:960')return '768x768 · 1:1';return '960x544 · 16:9'}
 function findOutputUrl(value){let found=null;const walk=x=>{if(found||x==null)return;if(typeof x==='string'){if(/^https?:\/\//i.test(x))found=x;return}if(Array.isArray(x))return x.forEach(walk);if(typeof x==='object'){for(const k of ['url','video_url','download_url']){if(typeof x[k]==='string'&&/^https?:\/\//i.test(x[k])){found=x[k];return}}if(typeof x.video?.url==='string'&&/^https?:\/\//i.test(x.video.url)){found=x.video.url;return}Object.values(x).forEach(walk)}};walk(value);return found}
 function extractProgress(value){let best=null;const walk=(x,key='')=>{if(x==null||best!==null)return;if(typeof x==='object'){for(const [k,v] of Object.entries(x)){const lk=k.toLowerCase();if(typeof v==='number'&&Number.isFinite(v)){if(/percent|percentage|progress/.test(lk)){best=v<=1?v*100:v;return}}if(v&&typeof v==='object'&&/progress/.test(lk)){if(typeof v.progress=== 'number') {best=v.progress<=1?v.progress*100:v.progress;return}if(typeof v.current==='number'&&typeof v.total==='number'&&v.total>0){best=v.current/v.total*100;return}}walk(v,lk);if(best!==null)return}}else if(Array.isArray(x)){for(const v of x){walk(v,key);if(best!==null)return}}};walk(value);return best===null?null:Math.max(0,Math.min(99,Math.round(best)))}
 function findOutputPath(value){let found=null;const walk=x=>{if(found||x==null)return;if(Array.isArray(x))return x.forEach(walk);if(typeof x==='object'){if(typeof x.path==='string'&&x.path)found=x.path;else Object.values(x).forEach(walk)}};walk(value);return found}
-async function uploadFreeFile(dataUri){const m=String(dataUri||'').match(/^data:([^;]+);base64,(.+)$/s);if(!m)return null;const form=new FormData();form.append('files',new Blob([Buffer.from(m[2],'base64')],{type:m[1]}),'reference.'+(m[1].split('/')[1]||'bin'));const rr=await fetch(cfg.freeUrl+'/gradio_api/upload',{method:'POST',headers:{...((cfg.hfToken||cfg.freeKey)?{Authorization:'Bearer '+(cfg.hfToken||cfg.freeKey)}:{})},body:form,signal:AbortSignal.timeout(60000)});const body=await rr.json().catch(()=>null);if(!rr.ok||!Array.isArray(body)||!body[0])throw Error('Free Engine تصویر مرجع را نپذیرفت.');return body[0];}
+async function uploadFreeFile(dataUri){const m=String(dataUri||'').match(/^data:([^;]+);base64,(.+)$/s);if(!m)return null;const form=new FormData();form.append('files',new Blob([Buffer.from(m[2],'base64')],{type:m[1]}),'reference.'+(m[1].split('/')[1]||'bin'));const rr=await fetch(cfg.freeUrl+'/gradio_api/upload',{method:'POST',headers:hfHeaders(),body:form,signal:AbortSignal.timeout(60000)});const body=await rr.json().catch(()=>null);if(!rr.ok||!Array.isArray(body)||!body[0])throw Error('Free Engine تصویر مرجع را نپذیرفت.');return body[0];}
 async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,seed,ipToken){
   const d=Math.max(5,Math.min(15,Number(duration)||5));
   const q=quality==='ultra'?'ultra':quality==='high'?'high':'fast';
@@ -273,7 +274,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
-      const rr=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json',...(ipToken?{'X-IP-Token':ipToken}:{}),...((cfg.hfToken||cfg.freeKey)?{Authorization:'Bearer '+(cfg.hfToken||cfg.freeKey)}:{})},body:JSON.stringify({data:args}),signal:AbortSignal.timeout(30000)});
+      const rr=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers:hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(ipToken?{'X-IP-Token':ipToken}:{})}),body:JSON.stringify({data:args}),signal:AbortSignal.timeout(30000)});
       const raw=await rr.text(); let body={}; try{body=raw?JSON.parse(raw):{}}catch{}
       if(rr.ok&&body.event_id)return{eventId:body.event_id,duration:d,quality:q,steps};
       const msg=String(body?.error||body?.detail||raw||'').trim(); if(rr.status===401||rr.status===403) last='Hugging Face احراز هویت نشد؛ HF_TOKEN معتبر یا سهمیه ZeroGPU لازم است.'; else if(rr.status===429) last='Hugging Face/ZeroGPU فعلاً سهمیه یا ظرفیت کافی ندارد.'; else if(rr.status>=500) last='سرویس MiniMax-H3 در Hugging Face خطای موقت upstream داد؛ درخواست دوباره تلاش می‌شود.'; else last=msg.slice(0,500)||('Free Engine HTTP '+rr.status);
@@ -304,7 +305,7 @@ app.post('/api/generate',auth,async(req,res)=>{
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
   if(prompt.length>4000||negativePrompt.length>1000)return res.status(400).json({error:'متن پرامپت بیش از حد مجاز است.'});
   if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
-    if(duration<4||duration>30)return res.status(400).json({error:'مدت باید بین ۴ تا ۳۰ ثانیه باشد.'});
+    if(duration<5||duration>15)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۵ ثانیه باشد.'});
   const projectId=String(req.body.projectId||'').trim();
   if(projectId&&!d.projects.some(x=>x.id===projectId&&x.userId===u.id))return res.status(404).json({error:'پروژه پیدا نشد.'});
   const cost=chargeFor(u,d);
@@ -422,7 +423,7 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
     if(j.provider==='free'){
       const uri=j.url;
       if(!uri)return res.status(404).send('لینک ویدئوی MiniMax-H3 پیدا نشد.');
-      const rr=await fetch(uri,{headers:{...((cfg.hfToken||cfg.freeKey)?{Authorization:`Bearer ${cfg.hfToken||cfg.freeKey}`}:{})},signal:AbortSignal.timeout(180000)});
+      const rr=await fetch(uri,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
       return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'minimax-h3');
     }
@@ -439,4 +440,4 @@ app.use((err,req,res,next)=>{
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath);res.status(404).send('index.html پیدا نشد.')});
-app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT}`));
+app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
