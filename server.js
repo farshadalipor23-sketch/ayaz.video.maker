@@ -467,4 +467,21 @@ app.use((err,req,res,next)=>{
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
+
+if (process.env.SELF_TEST_H3 === 'true') {
+  setTimeout(async()=>{
+    try {
+      const d=db(); const u=d.users.find(x=>x.role==='admin')||d.users[0];
+      const testJob={taskId:'selftest-'+uid(),userId:u?.id||'selftest',status:'PROCESSING',provider:'free',engine:'free',model:'minimax-h3-turbo',createdAt:Date.now(),progress:1,ipToken:null};
+      d.jobs.unshift(testJob); save(d);
+      const submitted=await submitFreeH3('A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',5,'1280:720','fast',true,null,42,null);
+      testJob.externalId=submitted.eventId; testJob.stage='QUEUED'; save(db());
+      const ok=await pollFreeH3(testJob);
+      const fresh=db().jobs.find(x=>x.taskId===testJob.taskId);
+      const bytes=fresh?.outputBytes||0;
+      const file=fresh?.localOutputPath||'';
+      console.log('[H3 SELF TEST]',JSON.stringify({ok,status:fresh?.status,bytes,ftyp:bytes>0&&file&&fs.existsSync(file),error:fresh?.error||null}));
+    } catch(e) { console.error('[H3 SELF TEST] Error:',e?.stack||e?.message||String(e)); }
+  },5000);
+}
 app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
