@@ -1,0 +1,56 @@
+name: real-h3-mp4-verification
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Real MiniMax H3 -> MP4 -> ftyp
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://ayaz-video-maker-geminiapikey-2.up.railway.app"
+          EMAIL="gha-h3-$(date +%s)-$RANDOM@example.com"
+          PASSWORD="T9!$(date +%s%N)Z"
+          echo "1) Register test user"
+          REG=$(curl -fsS --retry 3 -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' --data "{"email":"$EMAIL","password":"$PASSWORD"}")
+          TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["token"])' <<<"$REG")
+          echo "2) Submit real MiniMax H3 job"
+          GEN=$(curl -fsS --retry 3 -X POST "$BASE/api/generate" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" --data '{"prompt":"Real MP4 validation test: a calm cinematic city street at night, gentle forward camera movement, natural lighting, realistic motion.","model":"minimax-h3","duration":5,"ratio":"1280:720","resolution":"720p","quality":"fast","upsample":true}')
+          TASK=$(python -c 'import json,sys; print(json.load(sys.stdin)["taskId"])' <<<"$GEN")
+          echo "task=$TASK"
+          echo "3) Poll until the real engine finishes"
+          for i in $(seq 1 180); do
+            J=$(curl -fsS --retry 2 "$BASE/api/tasks/$TASK" -H "Authorization: Bearer $TOKEN")
+            STATUS=$(python -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' <<<"$J")
+            PROGRESS=$(python -c 'import json,sys; print(json.load(sys.stdin).get("progress",""))' <<<"$J")
+            echo "poll=$i status=$STATUS progress=$PROGRESS"
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              URL=$(python -c 'import json,sys; print(json.load(sys.stdin)["url"])' <<<"$J")
+              break
+            fi
+            if [ "$STATUS" = "FAILED" ]; then
+              python -c 'import json,sys; x=json.load(sys.stdin); print(x)' <<<"$J"
+              exit 1
+            fi
+            sleep 5
+          done
+          test "${URL:-}" != ""
+          echo "4) Download the produced MP4 from the service"
+          curl -fsS --retry 3 "$BASE$URL" -o /tmp/ayaz-real.mp4
+          echo "5) Verify MP4 bytes and ftyp"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("/tmp/ayaz-real.mp4")
+          b=p.read_bytes()
+          print("bytes=",len(b))
+          print("first64=",b[:64].hex())
+          print("ftyp=",b[:64].find(b"ftyp")>=0)
+          assert len(b)>=16
+          assert b[:64].find(b"ftyp")>=0, "ftyp not found"
+          PY
+          echo "REAL_MP4_VERIFICATION=PASS"
