@@ -54,3 +54,5 @@ jobs:
           assert b[:64].find(b"ftyp")>=0, "ftyp not found"
           PY
           echo "REAL_MP4_VERIFICATION=PASS"
+
+# live-service verification rerun
