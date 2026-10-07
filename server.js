@@ -389,7 +389,73 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   return {videoBuf,duration:d,quality:q,steps};
 }
 const freePollers=new Set();
-async function pollFreeH3(job){if(freePollers.has(job.taskId))return false;freePollers.add(job.taskId);try{const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/predict_fn_generate_video/${encodeURIComponent(job.externalId)}`,{headers:hfHeaders({Accept:'text/event-stream','Cache-Control':'no-cache',...((job.ipToken||await getHfZeroGpuToken())?{'X-IP-Token':job.ipToken||await getHfZeroGpuToken()}: {})}),signal:AbortSignal.timeout(12*60*1000)});if(!rr.body)throw Error('Free Engine پاسخ زنده (SSE) ندارد.');const reader=rr.body.getReader(),decoder=new TextDecoder();let buffer='',complete=null,failed=null;const consume=block=>{const normalized=block.replace(/\r/g,'');const em=normalized.match(/(?:^|\n)event:\s*([^\n]+)/),lines=normalized.split('\n').filter(x=>/^data:\s*/.test(x));if(!em||!lines.length)return;const raw=lines.map(x=>x.replace(/^data:\s*/,'' )).join('\n').trim();let data;try{data=JSON.parse(raw)}catch{data=raw}const eventName=em[1].trim();if(eventName==='complete')complete=data;if(eventName==='error')failed=data;if(eventName==='generating'||eventName==='status'||eventName==='process_starts'){const p=extractProgress(data),s=(data&&typeof data==='object')?data:{};const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){if(p!==null){j.progress=p;j.pollFailures=0;j.lastPollError=null;}const findNum=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='number'&&Number.isFinite(v)){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const findVal=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='string'){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const eta=findNum(data,['eta']);const pos=findNum(data,['position','rank']);const qs=findNum(data,['queue_size','queueSize','size']);const stage=findVal(data,['stage','status']);if(eta!==null)j.eta=Math.max(0,Math.round(eta));if(pos!==null)j.queuePosition=pos;if(qs!==null)j.queueSize=qs;if(stage)j.stage=stage;const pd=findNum(data,['progress']);if(pd!==null)j.progress=Math.max(0,Math.min(99,Math.round((pd<=1?pd*100:pd))));activeJobs.set(j.taskId,j);save(d)}}};while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const b of blocks)consume(b);if(failed||complete)break}if(buffer)consume(buffer);if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند.');const url=findOutputUrl(complete);const outputPath=url?null:findOutputPath(complete);const finalUrl=url||(outputPath?cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath):null);if(!finalUrl)throw Error('ویدئوی MiniMax H3 Turbo ساخته شد ولی لینک MP4 خروجی پیدا نشد.');const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});if(!videoResponse.ok)throw Error('MiniMax-H3 خروجی MP4 را برنگرداند؛ HTTP '+videoResponse.status);const videoBuf=Buffer.from(await videoResponse.arrayBuffer());if(!isMp4Buffer(videoBuf))throw Error('MiniMax-H3 خروجی دریافت‌شده MP4 معتبر نیست (ftyp پیدا نشد).');const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(!j)return false;await cacheMp4(j,videoBuf);j.status='SUCCEEDED';j.url='/api/tasks/'+encodeURIComponent(j.taskId)+'/video';j.completedAt=Date.now();j.outputBytes=videoBuf.length;j.error=undefined;activeJobs.set(j.taskId,j);save(d);return true}catch(e){console.error('[Ayaz Video Maker] MiniMax-H3 job failed:',e?.stack||e?.message||String(e));const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}return false}finally{freePollers.delete(job.taskId)}}
+async function pollFreeH3(job){
+  if(freePollers.has(job.taskId)) return false;
+  freePollers.add(job.taskId);
+  try{
+    const eventId=String(job.externalId||'').trim();
+    if(!eventId) throw Error('MiniMax-H3 event_id موجود نیست.');
+    const rr=await fetch(cfg.freeUrl+'/gradio_api/call/generate/'+encodeURIComponent(eventId),{
+      headers:hfHeaders({'Accept':'text/event-stream','Cache-Control':'no-cache'}),
+      signal:AbortSignal.timeout(12*60*1000)
+    });
+    if(!rr.ok) throw Error('MiniMax-H3 SSE HTTP '+rr.status+': '+(await rr.text()).slice(0,500));
+    if(!rr.body) throw Error('Free Engine پاسخ زنده (SSE) ندارد.');
+    const reader=rr.body.getReader(),decoder=new TextDecoder();
+    let buffer='',complete=null,failed=null,lastMessage=null;
+    const consume=block=>{
+      const normalized=block.replace(/\r/g,'');
+      const em=normalized.match(/(?:^|\n)event:\s*([^\n]+)/);
+      const lines=normalized.split('\n').filter(x=>/^data:\s*/.test(x));
+      if(!lines.length)return;
+      const raw=lines.map(x=>x.replace(/^data:\s*/,'')).join('\n').trim();
+      let data;try{data=JSON.parse(raw)}catch{data=raw}
+      lastMessage=data;
+      const eventName=em?.[1]?.trim()||'';
+      if(eventName==='error')failed=data;
+      if(eventName==='complete')complete=data;
+      if(['generating','status','process_starts'].includes(eventName)){
+        const p=extractProgress(data),d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);
+        if(j){
+          if(p!==null){j.progress=p;j.pollFailures=0;j.lastPollError=null;}
+          const stage=typeof data?.stage==='string'?data.stage:null;
+          if(stage)j.stage=stage;
+          activeJobs.set(j.taskId,j);save(d);
+        }
+      }
+    };
+    while(true){
+      const {value,done}=await reader.read();
+      if(done)break;
+      buffer+=decoder.decode(value,{stream:true});
+      const blocks=buffer.split(/\r?\n\r?\n/);
+      buffer=blocks.pop()||'';
+      for(const b of blocks)consume(b);
+      if(failed||complete)break;
+    }
+    if(buffer)consume(buffer);
+    if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));
+    if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند. Last message: '+JSON.stringify(lastMessage));
+    const url=findOutputUrl(complete);
+    const outputPath=url?null:findOutputPath(complete);
+    const finalUrl=url||(outputPath?(outputPath.startsWith('http')?outputPath:cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath)):null);
+    if(!finalUrl)throw Error('ویدئوی MiniMax H3 Turbo ساخته شد ولی لینک MP4 خروجی پیدا نشد.');
+    const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
+    if(!videoResponse.ok)throw Error('MiniMax-H3 خروجی MP4 را برنگرداند؛ HTTP '+videoResponse.status);
+    const videoBuf=Buffer.from(await videoResponse.arrayBuffer());
+    if(!isMp4Buffer(videoBuf))throw Error('MiniMax-H3 خروجی دریافت‌شده MP4 معتبر نیست (ftyp پیدا نشد).');
+    const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);
+    if(!j)return false;
+    await cacheMp4(j,videoBuf);
+    j.status='SUCCEEDED';j.stage='DONE';j.progress=100;j.url='/api/tasks/'+encodeURIComponent(j.taskId)+'/video';j.outputBytes=videoBuf.length;j.error=undefined;
+    activeJobs.set(j.taskId,j);save(d);return true;
+  }catch(e){
+    console.error('[Ayaz Video Maker] MiniMax-H3 job failed:',e?.stack||e?.message||String(e));
+    const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);
+    if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}
+    return false;
+  }finally{freePollers.delete(job.taskId)}
+}
 
 async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,promptImage,preferredProvider,model='auto',resolution='720p',seed=null,ipToken=null){
   const order=preferredProvider==='free'?['free']:['gemini'];
