@@ -367,7 +367,8 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
   const {Client}=await import('@gradio/client');
   const zeroGpuToken=await getHfZeroGpuToken(); const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{token:cfg.hfToken,events:['data','status'],headers:zeroGpuToken?{'x-ip-token':zeroGpuToken}:undefined});
-  const result=await client.predict('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
+  const job=client.submit('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
+  const result=await job.result();
   const data=result?.data;
   const url=findOutputUrl(data);
   const outputPath=url?null:findOutputPath(data);
