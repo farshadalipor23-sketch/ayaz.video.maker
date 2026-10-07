@@ -292,7 +292,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
-  const payload={data:[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample),true]};
+  const payload={data:[prompt,imagePath,null,canvas,d,steps,safeSeed,Boolean(upsample),true,'larry']};
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
