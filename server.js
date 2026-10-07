@@ -572,3 +572,16 @@ app.use((err,req,res,next)=>{
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 
 app.listen(PORT,()=>console.log('Ayaz Video Maker Pro listening on '+PORT+' | freeEngine='+Boolean(cfg.freeUrl)+' | hfTokenConfigured='+Boolean(cfg.hfToken)));
+if(process.env.SELF_TEST_H3==='true'){
+  setTimeout(async()=>{
+    const started=Date.now();
+    try{
+      console.log('[H3 SELF TEST] START');
+      const result=await generateFreeH3Client('Real MP4 validation test: a calm cinematic city street at night, gentle forward camera movement, natural lighting, realistic motion.',5,'1280:720','fast',true,null,42);
+      const ftyp=isMp4Buffer(result.videoBuf);
+      console.log('[H3 SELF TEST] RESULT',JSON.stringify({ok:ftyp,bytes:result.videoBuf.length,ftyp,duration:result.duration,steps:result.steps,elapsedMs:Date.now()-started}));
+    }catch(e){
+      console.error('[H3 SELF TEST] FAILED',e?.stack||e?.message||String(e));
+    }
+  },2500).unref();
+}
