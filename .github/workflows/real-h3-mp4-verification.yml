@@ -58,3 +58,5 @@ jobs:
 # live-service verification rerun
 
 # poll endpoint fix verification
+
+# ZeroGPU identity forwarding verification
