@@ -497,10 +497,6 @@ app.use((err,req,res,next)=>{
 });
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
-app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
-
-app.listen(PORT,()=>console.log('Ayaz Video Maker Pro listening on '+PORT+' | freeEngine='+Boolean(cfg.freeUrl)+' | hfTokenConfigured='+Boolean(cfg.hfToken)));
-
 if (process.env.SELF_TEST_H3 === 'true') {
   app.get('/api/self-test-download/:id?',(req,res)=>{
     let file=null;
@@ -519,6 +515,11 @@ if (process.env.SELF_TEST_H3 === 'true') {
     return res.download(file,'ayaz-self-test.mp4');
   });
 }
+
+app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
+
+app.listen(PORT,()=>console.log('Ayaz Video Maker Pro listening on '+PORT+' | freeEngine='+Boolean(cfg.freeUrl)+' | hfTokenConfigured='+Boolean(cfg.hfToken)));
+
 if (process.env.SELF_TEST_H3 === 'true') {
   setTimeout(async()=>{
     try {
