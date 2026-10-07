@@ -315,6 +315,27 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   }
   throw Error(last||'MiniMax-H3 فعلاً در دسترس نیست. احراز هویت Hugging Face و سهمیه ZeroGPU را بررسی کنید.');
 }
+async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promptImage,seed){
+  const d=Math.max(5,Math.min(15,Number(duration)||5));
+  const q=quality==='ultra'?'ultra':quality==='high'?'high':'fast';
+  const steps=q==='ultra'?10:q==='high'?8:6;
+  const imagePath=promptImage?await uploadFreeFile(promptImage):null;
+  const canvas=canvasFor(ratio,q);
+  const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
+  const {Client}=await import('@gradio/client');
+  const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{token:cfg.hfToken,events:['data','status']});
+  const result=await client.predict('/output_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
+  const data=result?.data;
+  const url=findOutputUrl(data);
+  const outputPath=url?null:findOutputPath(data);
+  const finalUrl=url||(outputPath?(outputPath.startsWith('http')?outputPath:cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath)):null);
+  if(!finalUrl)throw Error('MiniMax-H3 ویدئوی خروجی را برنگرداند.');
+  const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
+  if(!videoResponse.ok)throw Error('MiniMax-H3 خروجی MP4 را برنگرداند؛ HTTP '+videoResponse.status);
+  const videoBuf=Buffer.from(await videoResponse.arrayBuffer());
+  if(!isMp4Buffer(videoBuf))throw Error('MiniMax-H3 خروجی دریافت‌شده MP4 معتبر نیست (ftyp پیدا نشد).');
+  return {videoBuf,duration:d,quality:q,steps};
+}
 const freePollers=new Set();
 async function pollFreeH3(job){if(freePollers.has(job.taskId))return false;freePollers.add(job.taskId);try{const rr=await fetch(`${cfg.freeUrl}/gradio_api/call/generate/${encodeURIComponent(job.externalId)}`,{headers:hfHeaders({Accept:'text/event-stream','Cache-Control':'no-cache',...(job.ipToken?{'X-IP-Token':job.ipToken}:{})}),signal:AbortSignal.timeout(12*60*1000)});if(!rr.body)throw Error('Free Engine پاسخ زنده (SSE) ندارد.');const reader=rr.body.getReader(),decoder=new TextDecoder();let buffer='',complete=null,failed=null;const consume=block=>{const normalized=block.replace(/\r/g,'');const em=normalized.match(/(?:^|\n)event:\s*([^\n]+)/),lines=normalized.split('\n').filter(x=>/^data:\s*/.test(x));if(!em||!lines.length)return;const raw=lines.map(x=>x.replace(/^data:\s*/,'' )).join('\n').trim();let data;try{data=JSON.parse(raw)}catch{data=raw}const eventName=em[1].trim();if(eventName==='complete')complete=data;if(eventName==='error')failed=data;if(eventName==='generating'||eventName==='status'||eventName==='process_starts'){const p=extractProgress(data),s=(data&&typeof data==='object')?data:{};const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){if(p!==null){j.progress=p;j.pollFailures=0;j.lastPollError=null;}const findNum=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='number'&&Number.isFinite(v)){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const findVal=(v,keys)=>{let out=null;const walk=x=>{if(out!==null||x==null)return;if(Array.isArray(x)){for(const z of x)walk(z);return}if(typeof x!=='object')return;for(const [k,v] of Object.entries(x)){if(keys.includes(k.toLowerCase())&&typeof v==='string'){out=v;return}walk(v);if(out!==null)return}};walk(v);return out};const eta=findNum(data,['eta']);const pos=findNum(data,['position','rank']);const qs=findNum(data,['queue_size','queueSize','size']);const stage=findVal(data,['stage','status']);if(eta!==null)j.eta=Math.max(0,Math.round(eta));if(pos!==null)j.queuePosition=pos;if(qs!==null)j.queueSize=qs;if(stage)j.stage=stage;const pd=findNum(data,['progress']);if(pd!==null)j.progress=Math.max(0,Math.min(99,Math.round((pd<=1?pd*100:pd))));activeJobs.set(j.taskId,j);save(d)}}};while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const b of blocks)consume(b);if(failed||complete)break}if(buffer)consume(buffer);if(failed)throw Error(typeof failed==='string'?failed:JSON.stringify(failed));if(!complete)throw Error('Free Engine نتیجه نهایی را برنگرداند.');const url=findOutputUrl(complete);const outputPath=url?null:findOutputPath(complete);const finalUrl=url||(outputPath?cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath):null);if(!finalUrl)throw Error('ویدئوی MiniMax H3 Turbo ساخته شد ولی لینک MP4 خروجی پیدا نشد.');const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});if(!videoResponse.ok)throw Error('MiniMax-H3 خروجی MP4 را برنگرداند؛ HTTP '+videoResponse.status);const videoBuf=Buffer.from(await videoResponse.arrayBuffer());if(!isMp4Buffer(videoBuf))throw Error('MiniMax-H3 خروجی دریافت‌شده MP4 معتبر نیست (ftyp پیدا نشد).');const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(!j)return false;await cacheMp4(j,videoBuf);j.status='SUCCEEDED';j.url='/api/tasks/'+encodeURIComponent(j.taskId)+'/video';j.completedAt=Date.now();j.outputBytes=videoBuf.length;j.error=undefined;activeJobs.set(j.taskId,j);save(d);return true}catch(e){console.error('[Ayaz Video Maker] MiniMax-H3 job failed:',e?.stack||e?.message||String(e));const d=db(),j=d.jobs.find(x=>x.taskId===job.taskId);if(j){j.status='FAILED';j.error=e.message||String(e);if(j.cost){const u=d.users.find(x=>x.id===j.userId);if(u)u.wallet=Number(u.wallet||0)+j.cost;j.cost=0;j.refunded=true}activeJobs.set(j.taskId,j);save(d)}return false}finally{freePollers.delete(job.taskId)}}
 
@@ -325,7 +346,7 @@ async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,pr
     if(provider==='gemini'&&!cfg.geminiKey){attempts.push('gemini: API key missing');continue}
     try{
       if(provider==='gemini') return {provider,submitted:await submitGeminiVeo(prompt,duration,ratio,promptImage,model==='veo-pro'?'veo-pro':'veo-fast',resolution,seed),attempts};
-      return {provider:'free',submitted:await submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,seed,ipToken),attempts};
+      return {provider:'free-client',submitted:await generateFreeH3Client(prompt,duration,ratio,quality,upsample,promptImage,seed),attempts};
     }catch(e){attempts.push(provider+': '+(e?.message||String(e)));}
   }
   const detail=attempts.join(' | ')||'Free Engine API unavailable';
@@ -358,7 +379,7 @@ app.post('/api/generate',auth,async(req,res)=>{
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
   if(prompt.length>4000||negativePrompt.length>1000)return res.status(400).json({error:'متن پرامپت بیش از حد مجاز است.'});
   if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
-  if(duration<5||duration>14)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۴ ثانیه باشد.'});
+  if(duration<5||duration>15)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۵ ثانیه باشد.'});
   const projectId=String(req.body.projectId||'').trim();
   if(projectId&&!d.projects.some(x=>x.id===projectId&&x.userId===u.id))return res.status(404).json({error:'پروژه پیدا نشد.'});
   const cost=chargeFor(u,d);
@@ -377,9 +398,10 @@ app.post('/api/generate',auth,async(req,res)=>{
       const d2=db(),j=d2.jobs.find(x=>x.taskId===taskId);
       if(!j)return;
       j.fallbackAttempts=result.attempts;
-      if(result.provider==='free'){
-        j.engine='free';j.provider='free';j.model='minimax-h3-turbo';j.externalId=submitted.eventId;j.stage='QUEUED';j.progress=2;j.quality=submitted.quality;j.steps=submitted.steps;j.ipToken=ipToken||undefined;
-        activeJobs.set(j.taskId,j);save(d2);pollFreeH3(j).catch(()=>{});
+      if(result.provider==='free-client'){
+        await cacheMp4(j,submitted.videoBuf);
+        j.engine='free';j.provider='free';j.model='minimax-h3-turbo';j.status='SUCCEEDED';j.stage='DONE';j.progress=100;j.quality=submitted.quality;j.steps=submitted.steps;j.outputBytes=submitted.videoBuf.length;j.completedAt=Date.now();j.url='/api/tasks/'+encodeURIComponent(j.taskId)+'/video';j.error=undefined;
+        activeJobs.set(j.taskId,j);save(d2);
       }else if(result.provider==='gemini'){
         j.engine='gemini';j.provider='gemini';j.model=model==='auto'?'veo-fast':model;j.externalId=submitted.externalId;j.stage='PROCESSING';j.progress=2;
         activeJobs.set(j.taskId,j);save(d2);
