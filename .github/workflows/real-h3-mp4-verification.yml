@@ -16,7 +16,7 @@ jobs:
           BASE="https://ayaz-video-maker-geminiapikey-2.up.railway.app"
           EMAIL="gha-h3-$(date +%s)-$RANDOM@example.com"
           PASSWORD="T9!$(date +%s%N)Z"
-          echo "1) Register test user"
+          echo "0) Inspect live MiniMax H3 API schema"\n          curl -fsS --retry 3 "https://minimaxai-minimax-h3-turbo-lora.hf.space/gradio_api/info" | python -c 'import sys,json; x=json.load(sys.stdin); print(json.dumps(x,ensure_ascii=False)[:6000])'\n          echo "1) Register test user"
           REG=$(curl -fsS --retry 3 -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' --data "$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PASSWORD")")
           TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["token"])' <<<"$REG")
           echo "2) Submit real MiniMax H3 job"
