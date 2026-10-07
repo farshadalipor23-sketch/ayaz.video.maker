@@ -366,19 +366,19 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
-  const {Client}=await import('@gradio/client');
   const zeroGpuToken=await getHfZeroGpuToken();
-  const client=await Client.connect(cfg.h3SpaceId,{token:cfg.hfToken,events:['data','status'],headers:zeroGpuToken?{'x-ip-token':zeroGpuToken}:undefined});
-  const job=client.submit('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
-  let result=null,lastMessage=null;
-  for await (const message of job) { lastMessage=message;
-    if(message?.type==='status' && message?.status?.status==='error') throw Error(message?.status?.code||'MiniMax-H3 Gradio job failed.');
-    if(message?.type==='data') result=message;
-  }
-  if(!result) throw Error('MiniMax-H3 Gradio job completed without data. Last Gradio message: '+JSON.stringify(lastMessage));
-  const data=result?.data;
-  const url=findOutputUrl(data);
-  const outputPath=url?null:findOutputPath(data);
+  const headers=hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(zeroGpuToken?{'X-IP-Token':zeroGpuToken}: {})});
+  const submit=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers,body:JSON.stringify({data:[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true]}),signal:AbortSignal.timeout(90000)});
+  const submitRaw=await submit.text(); let submitBody={}; try{submitBody=submitRaw?JSON.parse(submitRaw):{}}catch{}
+  if(!submit.ok||!submitBody.event_id)throw Error('MiniMax-H3 generate submit failed: HTTP '+submit.status+' '+submitRaw.slice(0,500));
+  const stream=await fetch(cfg.freeUrl+'/gradio_api/call/generate/'+encodeURIComponent(submitBody.event_id),{headers:hfHeaders({'Accept':'text/event-stream','Cache-Control':'no-cache',...(zeroGpuToken?{'X-IP-Token':zeroGpuToken}: {})}),signal:AbortSignal.timeout(12*60*1000)});
+  if(!stream.body)throw Error('MiniMax-H3 generate stream unavailable.');
+  const reader=stream.body.getReader(),decoder=new TextDecoder();let buffer='',data=null,lastMessage=null;
+  const consume=block=>{const lines=block.replace(/\r/g,'').split('\n');const ev=lines.find(x=>x.startsWith('event:'))?.slice(6).trim();const ds=lines.filter(x=>x.startsWith('data:')).map(x=>x.slice(5).trim()).join('\n');if(!ds)return;let v;try{v=JSON.parse(ds)}catch{v=ds}lastMessage=v;if(ev==='error')throw Error(typeof v==='string'?v:JSON.stringify(v));if(ev==='complete')data=v;};
+  while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';for(const b of blocks){consume(b);if(data)break}if(data)break}
+  if(buffer&&!data)consume(buffer);
+  if(!data)throw Error('MiniMax-H3 generate completed without data. Last message: '+JSON.stringify(lastMessage));
+  const url=findOutputUrl(data),outputPath=url?null:findOutputPath(data);
   const finalUrl=url||(outputPath?(outputPath.startsWith('http')?outputPath:cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath)):null);
   if(!finalUrl)throw Error('MiniMax-H3 ویدئوی خروجی را برنگرداند.');
   const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
