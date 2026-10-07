@@ -1,4 +1,5 @@
 // AYAZ-H3-BUILD-MARKER-20261007
+// REAL-MP4-FTYP-PAYLOAD-9ARGS-20261007
 import express from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -351,7 +352,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   for(let attempt=1;attempt<=4;attempt++){
     try{
       const zeroGpuToken=ipToken||await getHfZeroGpuToken();
-      const rr=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers:hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(zeroGpuToken?{'X-IP-Token':zeroGpuToken}: {})}),body:JSON.stringify({data:[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true,'larry']}),signal:AbortSignal.timeout(90000)});
+      const rr=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers:hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(zeroGpuToken?{'X-IP-Token':zeroGpuToken}: {})}),body:JSON.stringify({data:[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true]}),signal:AbortSignal.timeout(90000)});
       const raw=await rr.text(); let body={}; try{body=raw?JSON.parse(raw):{}}catch{}
       if(rr.ok&&body.event_id)return{eventId:body.event_id,duration:d,quality:q,steps};
       const errorValue=body?.error??body?.detail??raw??''; let msg=''; try{msg=typeof errorValue==='string'?errorValue:(errorValue?.message||errorValue?.detail||JSON.stringify(errorValue));}catch{msg=String(errorValue)} msg=String(msg||'').trim(); if(rr.status===401||rr.status===403) last='Hugging Face احراز هویت نشد؛ HF_TOKEN معتبر یا سهمیه ZeroGPU لازم است.'; else if(rr.status===429) last='Hugging Face/ZeroGPU فعلاً سهمیه یا ظرفیت کافی ندارد.'; else if(rr.status>=500) last='MiniMax-H3 upstream HTTP '+rr.status+': '+msg.slice(0,500); else last=msg.slice(0,500)||('Free Engine HTTP '+rr.status);
@@ -369,7 +370,7 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
   const zeroGpuToken=null;
   const headers=hfHeaders({'Content-Type':'application/json',Accept:'application/json'});
-  const submit=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers,body:JSON.stringify({data:[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true,'larry']}),signal:AbortSignal.timeout(90000)});
+  const submit=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers,body:JSON.stringify({data:[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true]}),signal:AbortSignal.timeout(90000)});
   const submitRaw=await submit.text(); let submitBody={}; try{submitBody=submitRaw?JSON.parse(submitRaw):{}}catch{}
   if(!submit.ok||!submitBody.event_id)throw Error('MiniMax-H3 generate submit failed: HTTP '+submit.status+' '+submitRaw.slice(0,500));
   const stream=await fetch(cfg.freeUrl+'/gradio_api/call/generate/'+encodeURIComponent(submitBody.event_id),{headers:hfHeaders({'Accept':'text/event-stream','Cache-Control':'no-cache',...(zeroGpuToken?{'X-IP-Token':zeroGpuToken}: {})}),signal:AbortSignal.timeout(12*60*1000)});
