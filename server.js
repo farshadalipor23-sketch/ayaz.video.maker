@@ -368,12 +368,12 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const {Client}=await import('@gradio/client');
   const zeroGpuToken=await getHfZeroGpuToken(); const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{token:cfg.hfToken,events:['data','status'],headers:zeroGpuToken?{'x-ip-token':zeroGpuToken}:undefined});
   const job=client.submit('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
-  let result=null;
-  for await (const message of job) {
+  let result=null,lastMessage=null;
+  for await (const message of job) { lastMessage=message;
     if(message?.type==='status' && message?.status?.status==='error') throw Error(message?.status?.code||'MiniMax-H3 Gradio job failed.');
     if(message?.type==='data') result=message;
   }
-  if(!result) throw Error('MiniMax-H3 Gradio job completed without data. Last Gradio status: '+JSON.stringify(job?.status?.status||null));
+  if(!result) throw Error('MiniMax-H3 Gradio job completed without data. Last Gradio message: '+JSON.stringify(lastMessage));
   const data=result?.data;
   const url=findOutputUrl(data);
   const outputPath=url?null:findOutputPath(data);
