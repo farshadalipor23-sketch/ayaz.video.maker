@@ -327,7 +327,7 @@ app.post('/api/h3/browser-task',auth,async(req,res)=>{
   const prompt=String(req.body.prompt||'').trim();
   const duration=Number(req.body.duration||5);
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
-  if(duration<5||duration>14)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۴ ثانیه باشد.'});
+  if(duration<5||duration>15)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۵ ثانیه باشد.'});
   const cost=chargeFor(u,d);
   if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
   const taskId=uid();
