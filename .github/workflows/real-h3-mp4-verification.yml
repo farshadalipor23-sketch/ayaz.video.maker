@@ -17,7 +17,7 @@ jobs:
           EMAIL="gha-h3-$(date +%s)-$RANDOM@example.com"
           PASSWORD="T9!$(date +%s%N)Z"
           echo "1) Register test user"
-          REG=$(curl -fsS --retry 3 -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' --data "{"email":"$EMAIL","password":"$PASSWORD"}")
+          REG=$(curl -fsS --retry 3 -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' --data "$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PASSWORD")")
           TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["token"])' <<<"$REG")
           echo "2) Submit real MiniMax H3 job"
           GEN=$(curl -fsS --retry 3 -X POST "$BASE/api/generate" -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" --data '{"prompt":"Real MP4 validation test: a calm cinematic city street at night, gentle forward camera movement, natural lighting, realistic motion.","model":"minimax-h3","duration":5,"ratio":"1280:720","resolution":"720p","quality":"fast","upsample":true}')
