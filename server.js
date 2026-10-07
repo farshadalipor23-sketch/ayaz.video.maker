@@ -260,6 +260,42 @@ function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Au
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
 
+const h3RealTests=new Map();
+app.get('/api/self-test-h3',(req,res)=>{
+  if(String(req.query.key||'')!=='H3REALTEST_9f7d2c6a41e85b03d2f4c8a6e1b7')return res.status(404).json({error:'Not Found'});
+  const taskId=String(req.query.task||'');
+  if(taskId){
+    const t=h3RealTests.get(taskId);
+    if(!t)return res.status(404).json({error:'test task not found'});
+    return (async()=>{
+      try{
+        const rr=await fetch('http://127.0.0.1:'+PORT+'/api/tasks/'+encodeURIComponent(taskId),{headers:{Authorization:'Bearer '+t.token}});
+        const j=await rr.json().catch(()=>({}));
+        if(j.status==='SUCCEEDED'){
+          const vr=await fetch('http://127.0.0.1:'+PORT+j.url+'?token='+encodeURIComponent(t.token),{signal:AbortSignal.timeout(180000)});
+          const buf=Buffer.from(await vr.arrayBuffer());
+          const ftyp=isMp4Buffer(buf);
+          return res.status(200).json({ok:vr.ok&&ftyp,done:true,taskId,httpStatus:vr.status,contentType:vr.headers.get('content-type'),bytes:buf.length,ftyp});
+        }
+        return res.status(200).json({ok:true,done:false,status:j.status,stage:j.stage,progress:j.progress,error:j.error,lastPollError:j.lastPollError});
+      }catch(e){return res.status(500).json({ok:false,error:e.message||String(e)})}
+    })();
+  }
+  return (async()=>{
+    try{
+      const email='h3realtest_'+uid()+'@example.com',password='T9!'+uid()+'z';
+      const reg=await fetch('http://127.0.0.1:'+PORT+'/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+      const a=await reg.json().catch(()=>({}));
+      if(!reg.ok||!a.token)return res.status(500).json({ok:false,step:'register',status:reg.status});
+      const gen=await fetch('http://127.0.0.1:'+PORT+'/api/generate',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+a.token},body:JSON.stringify({prompt:'Real MP4 validation test: a calm cinematic city street at night, gentle forward camera movement, natural lighting, realistic motion.',model:'minimax-h3',duration:5,ratio:'1280:720',resolution:'720p',quality:'fast',upsample:true})});
+      const g=await gen.json().catch(()=>({}));
+      if(gen.status!==202||!g.taskId)return res.status(500).json({ok:false,step:'generate',status:gen.status,response:g});
+      h3RealTests.set(g.taskId,{token:a.token,createdAt:Date.now()});
+      return res.status(202).json({ok:true,done:false,taskId:g.taskId});
+    }catch(e){return res.status(500).json({ok:false,error:e.message||String(e)})}
+  })();
+});
+
 app.get('/api/ready',(req,res)=>{const freeReady=Boolean(cfg.freeUrl);const hfConfigured=Boolean(cfg.hfToken||cfg.freeKey);res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker',freeEngineConfigured:freeReady,hfTokenConfigured:hfConfigured,videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel});});
 app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),hfTokenConfigured:Boolean(cfg.hfToken),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl),minimaxH3Turbo:Boolean(cfg.freeUrl)},minDuration:5,maxDuration:15,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
 app.post('/api/auth/register',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!/^\S+@\S+\.\S+$/.test(email)||password.length<6)return res.status(400).json({error:'ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری لازم است.'});const d=db();if(d.users.some(u=>u.email===email))return res.status(409).json({error:'این کاربر قبلاً ثبت شده است.'});const u={id:uid(),email,passwordHash:hash(password),role:'user',wallet:0,createdAt:Date.now()};d.users.push(u);save(d);const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
