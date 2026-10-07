@@ -260,17 +260,16 @@ function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Au
 let cachedHfZeroGpuToken=null,cachedHfZeroGpuAt=0;
 async function getHfZeroGpuToken(){
   if(cachedHfZeroGpuToken&&Date.now()-cachedHfZeroGpuAt<5*60*1000)return cachedHfZeroGpuToken;
-  if(!cfg.hfToken)return null;
+  if(!cfg.hfToken){console.log('[H3 TOKEN] hfToken missing');return null}
   try{
-    const rr=await fetch('https://hf.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{
-      headers:{Authorization:`Bearer ${cfg.hfToken}`,Accept:'application/json'},
-      signal:AbortSignal.timeout(20000),redirect:'follow'
-    });
-    if(!rr.ok)return null;
-    const body=await rr.json().catch(()=>null);
+    const endpoint='https://hf.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt';
+    const rr=await fetch(endpoint,{headers:{Authorization:`Bearer ${cfg.hfToken}`,Accept:'application/json'},signal:AbortSignal.timeout(20000),redirect:'follow'});
+    const raw=await rr.text();
+    let body=null;try{body=JSON.parse(raw)}catch{}
     const tok=typeof body==='string'?body:(body?.token||body?.jwt||body?.access_token||body?.['x-ip-token']||null);
+    console.log('[H3 TOKEN] response',JSON.stringify({status:rr.status,contentType:rr.headers.get('content-type'),hasToken:Boolean(tok),bodyKeys:body&&typeof body==='object'?Object.keys(body):null,bodyType:typeof body,rawPrefix:tok?undefined:raw.slice(0,120)}));
     if(tok){cachedHfZeroGpuToken=String(tok);cachedHfZeroGpuAt=Date.now();return cachedHfZeroGpuToken}
-  }catch{}
+  }catch(e){console.log('[H3 TOKEN] fetch failed',e?.message||String(e))}
   return null;
 }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
