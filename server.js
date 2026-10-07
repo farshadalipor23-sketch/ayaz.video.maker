@@ -505,7 +505,7 @@ if (process.env.SELF_TEST_H3 === 'true') {
       const d=db(); const u=d.users.find(x=>x.role==='admin')||d.users[0];
       const testJob={taskId:'selftest-'+uid(),userId:u?.id||'selftest',status:'PROCESSING',provider:'free',engine:'free',model:'minimax-h3-turbo',createdAt:Date.now(),progress:1,ipToken:null};
       d.jobs.unshift(testJob); save(d);
-      const submitted=await submitFreeH3('A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',5,'1280:720','fast',true,null,42,null);
+      const zr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)}); const zj=await zr.json().catch(()=>({})); const zeroGpuToken=String(zj?.token||'').trim()||null; if(!zeroGpuToken) throw Error('H3 self-test could not obtain ZeroGPU identity.'); const submitted=await submitFreeH3('A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',5,'1280:720','fast',true,null,42,zeroGpuToken);
       testJob.externalId=submitted.eventId; testJob.stage='QUEUED'; save(db());
       const ok=await pollFreeH3(testJob);
       const fresh=db().jobs.find(x=>x.taskId===testJob.taskId);
