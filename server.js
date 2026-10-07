@@ -577,7 +577,7 @@ if(process.env.SELF_TEST_H3==='true'){
     const started=Date.now();
     try{
       console.log('[H3 SELF TEST] START');
-      const result=await generateFreeH3Client('Real MP4 validation test: a calm cinematic city street at night, gentle forward camera movement, natural lighting, realistic motion.',5,'1280:720','fast',true,null,42);
+      const result=await generateFreeH3Client('Real MP4 validation test: a calm cinematic city street at night, gentle forward camera movement, natural lighting, realistic motion.',5,'1280:720','fast',false,null,42);
       const ftyp=isMp4Buffer(result.videoBuf);
       console.log('[H3 SELF TEST] RESULT',JSON.stringify({ok:ftyp,bytes:result.videoBuf.length,ftyp,duration:result.duration,steps:result.steps,elapsedMs:Date.now()-started}));
     }catch(e){
