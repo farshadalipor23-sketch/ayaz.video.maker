@@ -90,6 +90,7 @@ const cfg = {
   runwayKey: process.env.RUNWAYML_API_SECRET || '',
   runwayBase: (process.env.RUNWAY_API_BASE || 'https://api.dev.runwayml.com/v1').replace(/\/$/, ''),
   freeUrl: (process.env.FREE_ENGINE_URL || 'https://minimaxai-minimax-h3-turbo-lora.hf.space').replace(/\/$/, ''),
+  h3SpaceId: (process.env.H3_SPACE_ID || 'MiniMaxAI/MiniMax-H3-Turbo-Lora').trim(),
   freeKey: process.env.FREE_ENGINE_API_KEY || '',
   hfToken: String(process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || '').trim(),
   zMerchant: process.env.ZARINPAL_MERCHANT_ID || '',
@@ -262,7 +263,7 @@ async function getHfZeroGpuToken(){
   if(cachedHfZeroGpuToken&&Date.now()-cachedHfZeroGpuAt<5*60*1000)return cachedHfZeroGpuToken;
   if(!cfg.hfToken){console.log('[H3 TOKEN] hfToken missing');return null}
   try{
-    const endpoint='https://hf.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt';
+    const endpoint='https://hf.co/api/spaces/'+encodeURIComponent(cfg.h3SpaceId)+'/jwt';
     const rr=await fetch(endpoint,{headers:{Authorization:`Bearer ${cfg.hfToken}`,Accept:'application/json'},signal:AbortSignal.timeout(20000),redirect:'follow'});
     const raw=await rr.text();
     let body=null;try{body=JSON.parse(raw)}catch{}
@@ -367,7 +368,7 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
   const {Client}=await import('@gradio/client');
   const zeroGpuToken=await getHfZeroGpuToken();
-  const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{token:cfg.hfToken,events:['data','status'],headers:zeroGpuToken?{'x-ip-token':zeroGpuToken}:undefined});
+  const client=await Client.connect(cfg.h3SpaceId,{token:cfg.hfToken,events:['data','status'],headers:zeroGpuToken?{'x-ip-token':zeroGpuToken}:undefined});
   const job=client.submit('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
   let result=null,lastMessage=null;
   for await (const message of job) { lastMessage=message;
