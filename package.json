@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "express": "^4.21.2",
-    "@gradio/client": "^1.18.0"
+    "@gradio/client": "^2.7.1"
   }
 }
