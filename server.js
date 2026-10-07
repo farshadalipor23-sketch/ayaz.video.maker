@@ -1,4 +1,5 @@
-// AYAZ-H3-BUILD-MARKER-20261007\nimport express from 'express';
+// AYAZ-H3-BUILD-MARKER-20261007
+import express from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
