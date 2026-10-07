@@ -367,8 +367,8 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const imagePath=promptImage?await uploadFreeFile(promptImage):null;
   const canvas=canvasFor(ratio,q);
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
-  const zeroGpuToken=await getHfZeroGpuToken();
-  const headers=hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(zeroGpuToken?{'X-IP-Token':zeroGpuToken}: {})});
+  const zeroGpuToken=null;
+  const headers=hfHeaders({'Content-Type':'application/json',Accept:'application/json'});
   const submit=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers,body:JSON.stringify({data:[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true,'larry']}),signal:AbortSignal.timeout(90000)});
   const submitRaw=await submit.text(); let submitBody={}; try{submitBody=submitRaw?JSON.parse(submitRaw):{}}catch{}
   if(!submit.ok||!submitBody.event_id)throw Error('MiniMax-H3 generate submit failed: HTTP '+submit.status+' '+submitRaw.slice(0,500));
