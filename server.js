@@ -259,8 +259,6 @@ function sendMp4(res,buf,source){
 function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Authorization:`Bearer ${token}`,'x-hf-authorization':`Bearer ${token}`,...extra} : {...extra}; }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
-app.get('/api/h3/identity',auth,async(req,res)=>{
-  if(!cfg.hfToken)return res.status(503).json({error:'HF_TOKEN برای هویت ZeroGPU تنظیم نشده است.'});
   try{
     const rr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)});
     const body=await rr.json().catch(()=>({}));
@@ -519,67 +517,3 @@ app.use((err,req,res,next)=>{
 });
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
-if (process.env.SELF_TEST_H3 === 'true') {
-  app.get('/api/self-test-download/:id?',(req,res)=>{
-    let file=null;
-    if(req.params.id){
-      const j=db().jobs.find(x=>x.taskId===req.params.id);
-      if(j&&String(j.taskId).startsWith('selftest-')&&j.localOutputPath)file=j.localOutputPath;
-    }else{
-      const dir=path.join(PERSIST_ROOT,'videos');
-      const files=fs.existsSync(dir)?fs.readdirSync(dir).filter(x=>x.startsWith('selftest-')&&x.endsWith('.mp4')):[];
-      for(const name of files){
-        const p=path.join(dir,name);
-        try{if(isMp4Buffer(fs.readFileSync(p))){file=p;break;}}catch{}
-      }
-    }
-    if(!file||!fs.existsSync(file))return res.status(404).end();
-    return res.download(file,'ayaz-self-test.mp4');
-  });
-}
-
-app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
-
-app.listen(PORT,()=>console.log('Ayaz Video Maker Pro listening on '+PORT+' | freeEngine='+Boolean(cfg.freeUrl)+' | hfTokenConfigured='+Boolean(cfg.hfToken)));
-
-if (process.env.SELF_TEST_H3 === 'true') {
-  setTimeout(async()=>{
-    try {
-      const d=db();
-      const verify=await fetch('http://127.0.0.1:'+PORT+'/api/self-test-download',{signal:AbortSignal.timeout(30000)});
-      if(verify.ok){
-        const downloaded=Buffer.from(await verify.arrayBuffer());
-        if(!isMp4Buffer(downloaded))throw Error('Stored MP4 HTTP download verification failed: ftyp missing.');
-        console.log('[H3 HTTP DOWNLOAD VERIFY]',JSON.stringify({ok:true,saved:true,downloadHttp:verify.status,bytes:downloaded.length,ftyp:isMp4Buffer(downloaded),contentType:verify.headers.get('content-type')}));
-        return;
-      }
-      const u=d.users.find(x=>x.role==='admin')||d.users[0];
-      const testJob={taskId:'selftest-'+uid(),userId:u?.id||'selftest',status:'PROCESSING',provider:'free-client',engine:'free-client',model:'minimax-h3-turbo',createdAt:Date.now(),progress:1};
-      d.jobs.unshift(testJob); save(d);
-      const zr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)});
-      const zj=await zr.json().catch(()=>({}));
-      const zeroGpuToken=String(zj?.token||'').trim();
-      if(!zeroGpuToken)throw Error('H3 self-test could not obtain ZeroGPU identity.');
-      const {Client}=await import('@gradio/client');
-      const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{
-        token:cfg.hfToken,
-        events:['data','status']
-      });
-      const result=await client.predict('/output_video',['A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',null,null,'960x544 · 16:9 fast',5,6,42,true,'larry']);
-      const data=result?.data;
-      const url=findOutputUrl(data);
-      const outputPath=findOutputPath(data);
-      const finalUrl=url||(outputPath?(outputPath.startsWith('http')?outputPath:cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath)):null);
-      if(!finalUrl)throw Error('H3 client result did not contain a video file.');
-      const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
-      if(!videoResponse.ok)throw Error('H3 client video download HTTP '+videoResponse.status);
-      const videoBuf=Buffer.from(await videoResponse.arrayBuffer());
-      if(!isMp4Buffer(videoBuf))throw Error('H3 client downloaded output has no ftyp.');
-      await cacheMp4(testJob,videoBuf);
-      testJob.status='SUCCEEDED';testJob.progress=100;testJob.stage='DONE';testJob.outputBytes=videoBuf.length;save(db());
-      const dr=await fetch('http://127.0.0.1:'+PORT+'/api/self-test-download/'+encodeURIComponent(testJob.taskId),{signal:AbortSignal.timeout(30000)}); const downloaded=Buffer.from(await dr.arrayBuffer()); if(!dr.ok||!isMp4Buffer(downloaded)||downloaded.length!==videoBuf.length) throw Error('HTTP MP4 download verification failed: status='+dr.status+' bytes='+downloaded.length); console.log('[H3 CLIENT SELF TEST]',JSON.stringify({ok:true,status:testJob.status,bytes:videoBuf.length,ftyp:true,saved:true,downloadHttp:dr.status,downloadBytes:downloaded.length,downloadFtyp:isMp4Buffer(downloaded),file:testJob.localOutputPath}));
-    } catch(e) {
-      console.error('[H3 CLIENT SELF TEST] Error:',e?.stack||e?.message||String(e));
-    }
-  },5000);
-}
