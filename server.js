@@ -509,8 +509,11 @@ if (process.env.SELF_TEST_H3 === 'true') {
       if(j&&String(j.taskId).startsWith('selftest-')&&j.localOutputPath)file=j.localOutputPath;
     }else{
       const dir=path.join(PERSIST_ROOT,'videos');
-      const files=fs.existsSync(dir)?fs.readdirSync(dir).filter(x=>x.startsWith('selftest-')&&x.endsWith('.mp4')).sort():[];
-      if(files.length)file=path.join(dir,files[files.length-1]);
+      const files=fs.existsSync(dir)?fs.readdirSync(dir).filter(x=>x.startsWith('selftest-')&&x.endsWith('.mp4')):[];
+      for(const name of files){
+        const p=path.join(dir,name);
+        try{if(isMp4Buffer(fs.readFileSync(p))){file=p;break;}}catch{}
+      }
     }
     if(!file||!fs.existsSync(file))return res.status(404).end();
     return res.download(file,'ayaz-self-test.mp4');
@@ -524,7 +527,7 @@ if (process.env.SELF_TEST_H3 === 'true') {
       if(verify.ok){
         const downloaded=Buffer.from(await verify.arrayBuffer());
         if(!isMp4Buffer(downloaded))throw Error('Stored MP4 HTTP download verification failed: ftyp missing.');
-        console.log('[H3 HTTP DOWNLOAD VERIFY]',JSON.stringify({ok:true,saved:true,downloadHttp:verify.status,bytes:downloaded.length,ftyp:isMp4Buffer(downloaded)}));
+        console.log('[H3 HTTP DOWNLOAD VERIFY]',JSON.stringify({ok:true,saved:true,downloadHttp:verify.status,bytes:downloaded.length,ftyp:isMp4Buffer(downloaded),contentType:verify.headers.get('content-type')}));
         return;
       }
       const u=d.users.find(x=>x.role==='admin')||d.users[0];
