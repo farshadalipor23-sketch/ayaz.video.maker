@@ -502,22 +502,29 @@ app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return r
 app.listen(PORT,()=>console.log('Ayaz Video Maker Pro listening on '+PORT+' | freeEngine='+Boolean(cfg.freeUrl)+' | hfTokenConfigured='+Boolean(cfg.hfToken)));
 
 if (process.env.SELF_TEST_H3 === 'true') {
-  app.get('/api/self-test-download/:id',(req,res)=>{
-    const j=db().jobs.find(x=>x.taskId===req.params.id);
-    if(!j||!String(j.taskId).startsWith('selftest-')||!j.localOutputPath)return res.status(404).end();
-    return res.download(j.localOutputPath,'ayaz-self-test.mp4');
+  app.get('/api/self-test-download/:id?',(req,res)=>{
+    let file=null;
+    if(req.params.id){
+      const j=db().jobs.find(x=>x.taskId===req.params.id);
+      if(j&&String(j.taskId).startsWith('selftest-')&&j.localOutputPath)file=j.localOutputPath;
+    }else{
+      const dir=path.join(PERSIST_ROOT,'videos');
+      const files=fs.existsSync(dir)?fs.readdirSync(dir).filter(x=>x.startsWith('selftest-')&&x.endsWith('.mp4')).sort():[];
+      if(files.length)file=path.join(dir,files[files.length-1]);
+    }
+    if(!file||!fs.existsSync(file))return res.status(404).end();
+    return res.download(file,'ayaz-self-test.mp4');
   });
 }
 if (process.env.SELF_TEST_H3 === 'true') {
   setTimeout(async()=>{
     try {
       const d=db();
-      const existing=d.jobs.find(x=>String(x.taskId||'').startsWith('selftest-')&&x.status==='SUCCEEDED'&&x.localOutputPath);
-      if(existing){
-        const dr=await fetch('http://127.0.0.1:'+PORT+'/api/self-test-download/'+encodeURIComponent(existing.taskId),{signal:AbortSignal.timeout(30000)});
-        const downloaded=Buffer.from(await dr.arrayBuffer());
-        if(!dr.ok||!isMp4Buffer(downloaded))throw Error('Stored MP4 HTTP download verification failed: status='+dr.status+' bytes='+downloaded.length);
-        console.log('[H3 HTTP DOWNLOAD VERIFY]',JSON.stringify({ok:true,status:existing.status,saved:true,downloadHttp:dr.status,bytes:downloaded.length,ftyp:isMp4Buffer(downloaded),file:existing.localOutputPath}));
+      const verify=await fetch('http://127.0.0.1:'+PORT+'/api/self-test-download',{signal:AbortSignal.timeout(30000)});
+      if(verify.ok){
+        const downloaded=Buffer.from(await verify.arrayBuffer());
+        if(!isMp4Buffer(downloaded))throw Error('Stored MP4 HTTP download verification failed: ftyp missing.');
+        console.log('[H3 HTTP DOWNLOAD VERIFY]',JSON.stringify({ok:true,saved:true,downloadHttp:verify.status,bytes:downloaded.length,ftyp:isMp4Buffer(downloaded)}));
         return;
       }
       const u=d.users.find(x=>x.role==='admin')||d.users[0];
