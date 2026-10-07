@@ -261,6 +261,15 @@ function sendMp4(res,buf,source){
 }
 function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Authorization:`Bearer ${token}`,'x-hf-authorization':`Bearer ${token}`,...extra} : {...extra}; }
 let cachedHfZeroGpuToken=null,cachedHfZeroGpuAt=0;
+async function logHfZeroGpuQuota(){
+  if(!cfg.hfToken)return;
+  try{
+    const rr=await fetch('https://huggingface.co/api/spaces/zero-gpu/quota',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+    const raw=await rr.text();
+    console.log('[H3 QUOTA] HTTP '+rr.status+' '+raw.slice(0,1000));
+  }catch(e){console.log('[H3 QUOTA] ERROR '+(e?.message||String(e)))}
+}
+
 async function getHfZeroGpuToken(){
   if(cachedHfZeroGpuToken&&Date.now()-cachedHfZeroGpuAt<5*60*1000)return cachedHfZeroGpuToken;
   if(!cfg.hfToken){console.log('[H3 TOKEN] hfToken missing');return null}
