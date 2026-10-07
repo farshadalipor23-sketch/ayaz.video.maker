@@ -373,7 +373,7 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
     if(message?.type==='status' && message?.status?.status==='error') throw Error(message?.status?.code||'MiniMax-H3 Gradio job failed.');
     if(message?.type==='data') result=message;
   }
-  if(!result) throw Error('MiniMax-H3 Gradio job completed without data.');
+  if(!result) throw Error('MiniMax-H3 Gradio job completed without data. Last Gradio status: '+JSON.stringify(job?.status?.status||null));
   const data=result?.data;
   const url=findOutputUrl(data);
   const outputPath=url?null:findOutputPath(data);
