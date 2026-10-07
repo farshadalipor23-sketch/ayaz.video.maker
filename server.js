@@ -322,6 +322,27 @@ async function submitVideoWithFallback(prompt,duration,ratio,quality,upsample,pr
   throw Error(detail.replace(/^free:\s*/i,''));
 }
 
+app.post('/api/h3/browser-task',auth,async(req,res)=>{
+  const d=req.db,u=req.user;
+  const prompt=String(req.body.prompt||'').trim();
+  const duration=Number(req.body.duration||5);
+  if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
+  if(duration<5||duration>14)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۴ ثانیه باشد.'});
+  const cost=chargeFor(u,d);
+  if(cost>0&&Number(u.wallet||0)<cost)return res.status(402).json({error:`سهمیه رایگان امروز تمام شده است. برای ادامه ${cost.toLocaleString('fa-IR')} ${cfg.currency} کیف پول لازم است.`});
+  const taskId=uid();
+  const job={id:uid(),taskId,userId:u.id,day:day(),engine:'free-browser',provider:'free-browser',model:'minimax-h3-turbo',status:'PROCESSING',stage:'BROWSER_H3',progress:1,createdAt:Date.now(),cost,duration,requestedDuration:duration,ratio:req.body.ratio||'1280:720',resolution:req.body.resolution||'native',seed:req.body.seed===''||req.body.seed==null?null:Number(req.body.seed)};
+  d.jobs.unshift(job);if(cost)u.wallet-=cost;activeJobs.set(taskId,job);save(d);
+  res.status(202).json({taskId,model:job.model,duration,engine:'free-browser',provider:'free-browser',directH3:true,queued:true});
+});
+app.post('/api/tasks/:id/browser-upload',express.raw({type:['video/mp4','application/octet-stream'],limit:'100mb'}),auth,async(req,res)=>{
+  const d=req.db,u=req.user,j=d.jobs.find(x=>x.taskId===req.params.id&&x.userId===u.id);
+  if(!j||j.provider!=='free-browser')return res.status(404).json({error:'Job پیدا نشد.'});
+  const buf=Buffer.isBuffer(req.body)?req.body:Buffer.alloc(0);
+  if(!isMp4Buffer(buf))return res.status(400).json({error:'خروجی MiniMax-H3 معتبر نیست؛ هدر ftyp پیدا نشد.'});
+  await cacheMp4(j,buf);j.provider='free-browser';j.engine='free-browser';j.status='SUCCEEDED';j.stage='DONE';j.progress=100;j.url='/api/tasks/'+encodeURIComponent(j.taskId)+'/video';j.outputBytes=buf.length;j.error=undefined;j.lastPollError=null;activeJobs.set(j.taskId,j);save(d);
+  res.json({ok:true,status:j.status,url:j.url,bytes:buf.length,ftyp:true});
+});
 app.post('/api/generate',auth,async(req,res)=>{
   const d=req.db,u=req.user,prompt=String(req.body.prompt||'').trim(),negativePrompt=String(req.body.negativePrompt||'').trim(),promptImage=req.body.promptImage||null,hasImage=Boolean(promptImage),duration=Number(req.body.duration||5),model=normalizeVideoModel(req.body.model),resolution=['720p','1080p','4k'].includes(req.body.resolution)?req.body.resolution:'720p',seed=req.body.seed===''||req.body.seed==null?null:Number(req.body.seed);
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
@@ -397,7 +418,7 @@ app.get('/api/tasks/:id',auth,async(req,res)=>{
 });
 
 async function processJob(job){
-  if(!job||job.status!=='PROCESSING')return;
+  if(!job||job.status!=='PROCESSING'||job.provider==='free-browser')return;
   try{
     if(job.provider==='openai')await refreshOpenAISora(job);
     else if(job.provider==='gemini')await refreshGeminiVeo(job);
@@ -448,7 +469,7 @@ app.get('/api/tasks/:id/video',async(req,res)=>{
       if(!rr.ok)return res.status(rr.status).send(await rr.text());
       return sendMp4(res,Buffer.from(await rr.arrayBuffer()),'gemini');
     }
-    if(j.provider==='free'){
+    if(j.provider==='free'||j.provider==='free-browser'){
       if(j.localOutputPath && fs.existsSync(j.localOutputPath)){
         return sendMp4(res,await fs.promises.readFile(j.localOutputPath),'minimax-h3-cache');
       }
