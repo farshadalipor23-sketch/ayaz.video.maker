@@ -268,7 +268,7 @@ async function getHfZeroGpuToken(){
     const rr=await fetch(endpoint,{headers:{Authorization:`Bearer ${cfg.hfToken}`,Accept:'application/json'},signal:AbortSignal.timeout(20000),redirect:'follow'});
     const raw=await rr.text();
     let body=null;try{body=JSON.parse(raw)}catch{}
-    const tok=typeof body==='string'?body:(body?.accessToken||body?.token||body?.jwt||body?.access_token||body?.['x-ip-token']||null);
+    const tok=typeof body==='string'?body:(body?.token||body?.accessToken||body?.jwt||body?.access_token||body?.['x-ip-token']||null);
     console.log('[H3 TOKEN] response',JSON.stringify({status:rr.status,contentType:rr.headers.get('content-type'),hasToken:Boolean(tok),bodyKeys:body&&typeof body==='object'?Object.keys(body):null,bodyType:typeof body,rawPrefix:tok?undefined:raw.slice(0,120)}));
     if(tok){cachedHfZeroGpuToken=String(tok);cachedHfZeroGpuAt=Date.now();return cachedHfZeroGpuToken}
   }catch(e){console.log('[H3 TOKEN] fetch failed',e?.message||String(e))}
