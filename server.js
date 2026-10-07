@@ -503,16 +503,36 @@ if (process.env.SELF_TEST_H3 === 'true') {
   setTimeout(async()=>{
     try {
       const d=db(); const u=d.users.find(x=>x.role==='admin')||d.users[0];
-      const testJob={taskId:'selftest-'+uid(),userId:u?.id||'selftest',status:'PROCESSING',provider:'free',engine:'free',model:'minimax-h3-turbo',createdAt:Date.now(),progress:1,ipToken:null};
+      const testJob={taskId:'selftest-'+uid(),userId:u?.id||'selftest',status:'PROCESSING',provider:'free-client',engine:'free-client',model:'minimax-h3-turbo',createdAt:Date.now(),progress:1};
       d.jobs.unshift(testJob); save(d);
-      const zr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)}); const zj=await zr.json().catch(()=>({})); const zeroGpuToken=String(zj?.token||'').trim()||null; if(!zeroGpuToken) throw Error('H3 self-test could not obtain ZeroGPU identity.'); const submitted=await submitFreeH3('A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',5,'1280:720','fast',true,null,42,zeroGpuToken);
-      testJob.externalId=submitted.eventId; testJob.stage='QUEUED'; save(db());
-      const ok=await pollFreeH3(testJob);
-      const fresh=db().jobs.find(x=>x.taskId===testJob.taskId);
-      const bytes=fresh?.outputBytes||0;
-      const file=fresh?.localOutputPath||'';
-      console.log('[H3 SELF TEST]',JSON.stringify({ok,status:fresh?.status,bytes,ftyp:bytes>0&&file&&fs.existsSync(file),error:fresh?.error||null}));
-    } catch(e) { console.error('[H3 SELF TEST] Error:',e?.stack||e?.message||String(e)); }
+      const zr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)});
+      const zj=await zr.json().catch(()=>({}));
+      const zeroGpuToken=String(zj?.token||'').trim();
+      if(!zeroGpuToken)throw Error('H3 self-test could not obtain ZeroGPU identity.');
+      const {Client}=await import('@gradio/client');
+      const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{
+        token:cfg.hfToken,
+        headers:{'x-ip-token':zeroGpuToken},
+        events:['data','status']
+      });
+      const result=await client.predict('/generate',{
+        prompt:'A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',
+        image_path:null,last_image_path:null,canvas:'960x544 · 16:9 fast',duration:5,steps:6,seed:42,upsample:true,use_lora:true
+      });
+      const data=result?.data;
+      const url=findOutputUrl(data);
+      const outputPath=findOutputPath(data);
+      const finalUrl=url||(outputPath?(outputPath.startsWith('http')?outputPath:cfg.freeUrl+'/gradio_api/file='+encodeURIComponent(outputPath)):null);
+      if(!finalUrl)throw Error('H3 client result did not contain a video file.');
+      const videoResponse=await fetch(finalUrl,{headers:hfHeaders(),signal:AbortSignal.timeout(180000)});
+      if(!videoResponse.ok)throw Error('H3 client video download HTTP '+videoResponse.status);
+      const videoBuf=Buffer.from(await videoResponse.arrayBuffer());
+      if(!isMp4Buffer(videoBuf))throw Error('H3 client downloaded output has no ftyp.');
+      await cacheMp4(testJob,videoBuf);
+      testJob.status='SUCCEEDED';testJob.progress=100;testJob.stage='DONE';testJob.outputBytes=videoBuf.length;save(db());
+      console.log('[H3 CLIENT SELF TEST]',JSON.stringify({ok:true,status:testJob.status,bytes:videoBuf.length,ftyp:true,file:testJob.localOutputPath}));
+    } catch(e) {
+      console.error('[H3 CLIENT SELF TEST] Error:',e?.stack||e?.message||String(e));
+    }
   },5000);
 }
-app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
