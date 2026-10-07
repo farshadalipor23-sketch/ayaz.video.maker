@@ -137,7 +137,7 @@ function chooseVideoProvider(hasImage,model='auto',duration=6){
 function providerDuration(provider,duration){
   const n=Math.max(5,Number(duration)||5);
   if(provider==='gemini') return n>8?8:n;
-  return Math.min(15,n);
+  return Math.min(14,n);
 }
 function dataUriToBlob(dataUri){
   const m=String(dataUri||'').match(/^data:([^;]+);base64,(.+)$/s);
@@ -327,7 +327,7 @@ app.post('/api/generate',auth,async(req,res)=>{
   if(!prompt)return res.status(400).json({error:'پرامپت را وارد کنید.'});
   if(prompt.length>4000||negativePrompt.length>1000)return res.status(400).json({error:'متن پرامپت بیش از حد مجاز است.'});
   if(seed!==null&&(!Number.isInteger(seed)||seed<0))return res.status(400).json({error:'Seed نامعتبر است.'});
-  if(duration<5||duration>15)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۵ ثانیه باشد.'});
+  if(duration<5||duration>14)return res.status(400).json({error:'مدت MiniMax-H3 باید بین ۵ تا ۱۴ ثانیه باشد.'});
   const projectId=String(req.body.projectId||'').trim();
   if(projectId&&!d.projects.some(x=>x.id===projectId&&x.userId===u.id))return res.status(404).json({error:'پروژه پیدا نشد.'});
   const cost=chargeFor(u,d);
@@ -395,6 +395,22 @@ app.get('/api/tasks/:id',auth,async(req,res)=>{
     out.url||null;
   res.json({status:out.status,url,error:out.error,lastPollError:out.lastPollError||null,pollFailures:out.pollFailures||0,engine:out.engine,provider:out.provider,quality:out.quality,steps:out.steps,progress:typeof out.progress==='number'?out.progress:null,stage:out.stage||null,eta:typeof out.eta==='number'?out.eta:null,queuePosition:typeof out.queuePosition==='number'?out.queuePosition:null,queueSize:typeof out.queueSize==='number'?out.queueSize:null});
 });
+
+async function runH3SelfTest(){
+  if(String(process.env.SELF_TEST_H3||'').toLowerCase()!=='true')return;
+  const taskId='self-test-'+uid();
+  const j={taskId,userId:'__selftest__',provider:'free',engine:'free',model:'minimax-h3-turbo',status:'PROCESSING',stage:'SELF_TEST',progress:1,createdAt:Date.now(),cost:0,duration:5,ratio:'1280:720',ipToken:null};
+  const d=db();d.jobs.unshift(j);save(d);
+  try{
+    const submitted=await submitFreeH3('A simple cinematic sunrise over a quiet mountain lake, natural motion, realistic lighting.',5,'1280:720','fast',false,null,42,null);
+    j.externalId=submitted.eventId;j.quality=submitted.quality;j.steps=submitted.steps;save(d);
+    await pollFreeH3(j);
+    const out=db().jobs.find(x=>x.taskId===taskId);
+    console.log('[H3 SELF TEST]',JSON.stringify({ok:Boolean(out&&out.status==='SUCCEEDED'),status:out?.status||null,bytes:out?.outputBytes||0,ftyp:Boolean(out?.localOutputPath&&fs.existsSync(out.localOutputPath))}));
+    if(out?.localOutputPath)await fs.promises.rm(out.localOutputPath,{force:true}).catch(()=>{});
+  }catch(e){console.error('[H3 SELF TEST]',e?.stack||e?.message||String(e));}
+  const clean=db();clean.jobs=clean.jobs.filter(x=>x.taskId!==taskId);save(clean);
+}
 
 async function processJob(job){
   if(!job||job.status!=='PROCESSING')return;
@@ -467,4 +483,4 @@ app.use((err,req,res,next)=>{
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
-app.listen(PORT,()=>console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`));
+app.listen(PORT,()=>{console.log(`Ayaz Video Maker Pro listening on ${PORT} | freeEngine=${Boolean(cfg.freeUrl)} | hfTokenConfigured=${Boolean(cfg.hfToken)}`);setTimeout(()=>{runH3SelfTest().catch(e=>console.error('[H3 SELF TEST]',e?.stack||e?.message||String(e)))},5000);});
