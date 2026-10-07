@@ -333,7 +333,7 @@ async function submitFreeH3(prompt,duration,ratio,quality,upsample,promptImage,s
   let last='';
   for(let attempt=1;attempt<=4;attempt++){
     try{
-      const rr=await fetch(cfg.freeUrl+'/gradio_api/call/generate',{method:'POST',headers:hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(ipToken?{'X-IP-Token':ipToken}:{})}),body:JSON.stringify(payload),signal:AbortSignal.timeout(90000)});
+      const rr=await fetch(cfg.freeUrl+'/gradio_api/call/predict_fn_generate_video',{method:'POST',headers:hfHeaders({'Content-Type':'application/json',Accept:'application/json',...(ipToken?{'X-IP-Token':ipToken}:{})}),body:JSON.stringify(payload),signal:AbortSignal.timeout(90000)});
       const raw=await rr.text(); let body={}; try{body=raw?JSON.parse(raw):{}}catch{}
       if(rr.ok&&body.event_id)return{eventId:body.event_id,duration:d,quality:q,steps};
       const errorValue=body?.error??body?.detail??raw??''; let msg=''; try{msg=typeof errorValue==='string'?errorValue:(errorValue?.message||errorValue?.detail||JSON.stringify(errorValue));}catch{msg=String(errorValue)} msg=String(msg||'').trim(); if(rr.status===401||rr.status===403) last='Hugging Face احراز هویت نشد؛ HF_TOKEN معتبر یا سهمیه ZeroGPU لازم است.'; else if(rr.status===429) last='Hugging Face/ZeroGPU فعلاً سهمیه یا ظرفیت کافی ندارد.'; else if(rr.status>=500) last='MiniMax-H3 upstream HTTP '+rr.status+': '+msg.slice(0,500); else last=msg.slice(0,500)||('Free Engine HTTP '+rr.status);
@@ -351,7 +351,7 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const safeSeed=Number.isInteger(Number(seed))&&Number(seed)>=0?Number(seed):42;
   const {Client}=await import('@gradio/client');
   const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{token:cfg.hfToken,events:['data','status']});
-  const result=await client.predict('/generate',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true]);
+  const result=await client.predict('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),'larry']);
   const data=result?.data;
   const url=findOutputUrl(data);
   const outputPath=url?null:findOutputPath(data);
