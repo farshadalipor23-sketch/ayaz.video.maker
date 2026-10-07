@@ -263,7 +263,7 @@ async function getHfZeroGpuToken(){
   if(cachedHfZeroGpuToken&&Date.now()-cachedHfZeroGpuAt<5*60*1000)return cachedHfZeroGpuToken;
   if(!cfg.hfToken){console.log('[H3 TOKEN] hfToken missing');return null}
   try{
-    const endpoint='https://hf.co/api/spaces/'+encodeURIComponent(cfg.h3SpaceId)+'/jwt';
+    const endpoint='https://hf.co/api/spaces/'+cfg.h3SpaceId+'/jwt';
     const rr=await fetch(endpoint,{headers:{Authorization:`Bearer ${cfg.hfToken}`,Accept:'application/json'},signal:AbortSignal.timeout(20000),redirect:'follow'});
     const raw=await rr.text();
     let body=null;try{body=JSON.parse(raw)}catch{}
