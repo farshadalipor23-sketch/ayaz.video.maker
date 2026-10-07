@@ -510,3 +510,5 @@ app.use((err,req,res,next)=>{
 });
 
 app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'public')));
+
+app.listen(PORT,()=>console.log('Ayaz Video Maker Pro listening on '+PORT+' | freeEngine='+Boolean(cfg.freeUrl)+' | hfTokenConfigured='+Boolean(cfg.hfToken)));
