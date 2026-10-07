@@ -369,7 +369,11 @@ async function generateFreeH3Client(prompt,duration,ratio,quality,upsample,promp
   const {Client}=await import('@gradio/client');
   const zeroGpuToken=await getHfZeroGpuToken();
   const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{token:cfg.hfToken,events:['data','status'],headers:zeroGpuToken?{'x-ip-token':zeroGpuToken}:undefined});
-  const job=client.submit('/generate',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true]);
+  const apiInfo=await client.view_api();
+  const ep=apiInfo?.named_endpoints?.['/predict_fn_generate_video']||null;
+  if(!ep)throw Error('MiniMax-H3 endpoint schema unavailable.');
+  console.log('[H3 API SCHEMA]',JSON.stringify({parameters:(ep.parameters||[]).map(x=>({label:x.label,type:x.type,component:x.component,parameter_name:x.parameter_name,has_default:x.parameter_has_default,default:x.parameter_default}))}));
+  const job=client.submit('/predict_fn_generate_video',[prompt,imagePath?{path:imagePath,meta:{_type:'gradio.FileData'}}:null,null,canvas,d,steps,safeSeed,Boolean(upsample),true]);
   let result=null,lastMessage=null;
   for await (const message of job) { lastMessage=message;
     if(message?.type==='status' && message?.status?.status==='error') throw Error(message?.status?.code||'MiniMax-H3 Gradio job failed.');
