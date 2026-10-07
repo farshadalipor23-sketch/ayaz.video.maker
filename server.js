@@ -511,7 +511,16 @@ if (process.env.SELF_TEST_H3 === 'true') {
 if (process.env.SELF_TEST_H3 === 'true') {
   setTimeout(async()=>{
     try {
-      const d=db(); const u=d.users.find(x=>x.role==='admin')||d.users[0];
+      const d=db();
+      const existing=d.jobs.find(x=>String(x.taskId||'').startsWith('selftest-')&&x.status==='SUCCEEDED'&&x.localOutputPath);
+      if(existing){
+        const dr=await fetch('http://127.0.0.1:'+PORT+'/api/self-test-download/'+encodeURIComponent(existing.taskId),{signal:AbortSignal.timeout(30000)});
+        const downloaded=Buffer.from(await dr.arrayBuffer());
+        if(!dr.ok||!isMp4Buffer(downloaded))throw Error('Stored MP4 HTTP download verification failed: status='+dr.status+' bytes='+downloaded.length);
+        console.log('[H3 HTTP DOWNLOAD VERIFY]',JSON.stringify({ok:true,status:existing.status,saved:true,downloadHttp:dr.status,bytes:downloaded.length,ftyp:isMp4Buffer(downloaded),file:existing.localOutputPath}));
+        return;
+      }
+      const u=d.users.find(x=>x.role==='admin')||d.users[0];
       const testJob={taskId:'selftest-'+uid(),userId:u?.id||'selftest',status:'PROCESSING',provider:'free-client',engine:'free-client',model:'minimax-h3-turbo',createdAt:Date.now(),progress:1};
       d.jobs.unshift(testJob); save(d);
       const zr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)});
