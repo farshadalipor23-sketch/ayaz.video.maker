@@ -500,6 +500,13 @@ app.use(express.static(__dirname));app.use(express.static(path.join(__dirname,'p
 app.get('*',(req,res)=>{const indexPath=getIndexFilePath();if(indexPath)return res.sendFile(indexPath,{dotfiles:'deny',etag:false});res.status(404).send('index.html پیدا نشد.')});
 
 if (process.env.SELF_TEST_H3 === 'true') {
+  app.get('/api/self-test-download/:id',(req,res)=>{
+    const j=db().jobs.find(x=>x.taskId===req.params.id);
+    if(!j||!String(j.taskId).startsWith('selftest-')||!j.localOutputPath)return res.status(404).end();
+    return res.download(j.localOutputPath,'ayaz-self-test.mp4');
+  });
+}
+if (process.env.SELF_TEST_H3 === 'true') {
   setTimeout(async()=>{
     try {
       const d=db(); const u=d.users.find(x=>x.role==='admin')||d.users[0];
@@ -526,7 +533,7 @@ if (process.env.SELF_TEST_H3 === 'true') {
       if(!isMp4Buffer(videoBuf))throw Error('H3 client downloaded output has no ftyp.');
       await cacheMp4(testJob,videoBuf);
       testJob.status='SUCCEEDED';testJob.progress=100;testJob.stage='DONE';testJob.outputBytes=videoBuf.length;save(db());
-      console.log('[H3 CLIENT SELF TEST]',JSON.stringify({ok:true,status:testJob.status,bytes:videoBuf.length,ftyp:true,file:testJob.localOutputPath}));
+      const dr=await fetch('http://127.0.0.1:'+PORT+'/api/self-test-download/'+encodeURIComponent(testJob.taskId),{signal:AbortSignal.timeout(30000)}); const downloaded=Buffer.from(await dr.arrayBuffer()); if(!dr.ok||!isMp4Buffer(downloaded)||downloaded.length!==videoBuf.length) throw Error('HTTP MP4 download verification failed: status='+dr.status+' bytes='+downloaded.length); console.log('[H3 CLIENT SELF TEST]',JSON.stringify({ok:true,status:testJob.status,bytes:videoBuf.length,ftyp:true,saved:true,downloadHttp:dr.status,downloadBytes:downloaded.length,downloadFtyp:isMp4Buffer(downloaded),file:testJob.localOutputPath}));
     } catch(e) {
       console.error('[H3 CLIENT SELF TEST] Error:',e?.stack||e?.message||String(e));
     }
