@@ -512,10 +512,8 @@ if (process.env.SELF_TEST_H3 === 'true') {
       const {Client}=await import('@gradio/client');
       const client=await Client.connect('MiniMaxAI/MiniMax-H3-Turbo-Lora',{
         token:cfg.hfToken,
-        headers:{'x-ip-token':zeroGpuToken},
         events:['data','status']
       });
-      const apiInfo=await client.view_api(); console.log('[H3 API INFO]',JSON.stringify(apiInfo));
       const result=await client.predict('/output_video',['A simple realistic cinematic sunset over a calm ocean, natural colors, gentle waves.',null,null,'960x544 · 16:9 fast',5,6,42,true,'larry']);
       const data=result?.data;
       const url=findOutputUrl(data);
