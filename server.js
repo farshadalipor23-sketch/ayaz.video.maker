@@ -259,6 +259,16 @@ function sendMp4(res,buf,source){
 function hfHeaders(extra={}){ const token=cfg.hfToken.trim(); return token ? {Authorization:`Bearer ${token}`,'x-hf-authorization':`Bearer ${token}`,...extra} : {...extra}; }
 function safePublicSettings(d){return{bankName:d.settings.bankName||'',accountHolder:d.settings.accountHolder||'',cardNumber:d.settings.cardNumber||'',iban:d.settings.iban||'',bankNote:d.settings.bankNote||''}}
 
+app.get('/api/h3/identity',auth,async(req,res)=>{
+  if(!cfg.hfToken)return res.status(503).json({error:'HF_TOKEN برای هویت ZeroGPU تنظیم نشده است.'});
+  try{
+    const rr=await fetch('https://huggingface.co/api/spaces/MiniMaxAI/MiniMax-H3-Turbo-Lora/jwt',{headers:{Authorization:'Bearer '+cfg.hfToken,Accept:'application/json'},signal:AbortSignal.timeout(20000)});
+    const body=await rr.json().catch(()=>({}));
+    const jwt=String(body?.token||'').trim();
+    if(!rr.ok||!jwt)return res.status(502).json({error:'هویت Hugging Face برای ZeroGPU دریافت نشد.'});
+    res.json({ok:true,token:jwt});
+  }catch(e){res.status(502).json({error:'دریافت هویت ZeroGPU ناموفق بود.'});}
+});
 app.get('/api/ready',(req,res)=>{const freeReady=Boolean(cfg.freeUrl);const hfConfigured=Boolean(cfg.hfToken||cfg.freeKey);res.status(200).json({ok:true,ready:true,service:'ayaz-video-maker',freeEngineConfigured:freeReady,hfTokenConfigured:hfConfigured,videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel});});
 app.get('/api/health',(req,res)=>res.json({ok:true,service:'ayaz-video-maker',version:process.env.RAILWAY_GIT_COMMIT_SHA||process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'local',node:process.version,indexAvailable:Boolean(getIndexFilePath()),port:PORT,openaiConfigured:Boolean(cfg.openaiKey),geminiConfigured:Boolean(cfg.geminiKey),freeEngineConfigured:Boolean(cfg.freeUrl),hfTokenConfigured:Boolean(cfg.hfToken),videoProvider:cfg.videoProvider,defaultVideoModel:cfg.defaultVideoModel,models:{veoFast:Boolean(cfg.geminiKey),veoPro:Boolean(cfg.geminiKey),minimaxH3:Boolean(cfg.freeUrl),minimaxH3Turbo:Boolean(cfg.freeUrl)},minDuration:5,maxDuration:15,dailyFreeUser:cfg.userFree,dailyFreeAdmin:cfg.adminFree,pricePerVideo:cfg.price,currency:cfg.currency,zarinpalConfigured:Boolean(cfg.zMerchant&&cfg.zCallback)}));
 app.post('/api/auth/register',(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!/^\S+@\S+\.\S+$/.test(email)||password.length<6)return res.status(400).json({error:'ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری لازم است.'});const d=db();if(d.users.some(u=>u.email===email))return res.status(409).json({error:'این کاربر قبلاً ثبت شده است.'});const u={id:uid(),email,passwordHash:hash(password),role:'user',wallet:0,createdAt:Date.now()};d.users.push(u);save(d);const t=token(u.id);sessions.set(t,{id:u.id});res.json({token:t,user:publicUser(d,u)})});
